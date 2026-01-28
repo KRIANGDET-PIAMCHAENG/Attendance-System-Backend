@@ -2,6 +2,8 @@ package utils
 
 import (
 	"context"
+	"encoding/json" // เพิ่มตัวนี้สำหรับ json.NewDecoder
+	"net/http"      // เพิ่มตัวนี้สำหรับ http.Get
 	"google.golang.org/api/idtoken"
 )
 
@@ -31,4 +33,22 @@ func VerifyGoogleToken(idToken string) (*GoogleUser, error) {
 	}
 
 	return user, nil
+}
+
+// ตัวอย่างการ Verify ด้วย Access Token (ต้องแก้ใน pkg/utils/google.go)
+func VerifyGoogleAccessToken(accessToken string) (*GoogleUser, error) {
+    resp, err := http.Get("https://www.googleapis.com/oauth2/v3/userinfo?access_token=" + accessToken)
+    if err != nil {
+        return nil, err
+    }
+    defer resp.Body.Close()
+
+    var res struct {
+        Email string `json:"email"`
+        Name  string `json:"name"`
+    }
+    if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+        return nil, err
+    }
+    return &GoogleUser{Email: res.Email, Name: res.Name}, nil
 }

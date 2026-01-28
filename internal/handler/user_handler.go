@@ -16,33 +16,31 @@ func NewUserHandler(repo *repository.UserRepo) *UserHandler {
 
 
 func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
-    // 1. รับ Google Token จาก Client
-    // (สมมติว่า Client ส่ง JSON {"token": "google_access_token"})
-    var input struct { Token string `json:"token"` }
+    var input struct { Token string `json:"token" binding:"required"` }
     if err := c.ShouldBindJSON(&input); err != nil {
-        c.JSON(400, gin.H{"error": "Invalid request"})
+        c.JSON(400, gin.H{"error": "Invalid JSON format"})
         return
     }
 
-    // 2. [SKIP] ตรงนี้คุณต้องเขียนฟังก์ชันไป Verify กับ Google API 
-    // เพื่อให้ได้ email มา (สมมติว่าได้ email มาแล้ว)
-    googleUser, err := utils.VerifyGoogleToken(input.Token)
+    // 🚩 แก้จุดนี้: เปลี่ยนจาก VerifyGoogleToken เป็น VerifyGoogleAccessToken
+    googleUser, err := utils.VerifyGoogleAccessToken(input.Token) 
     if err != nil {
-        c.JSON(401, gin.H{"error": "Invalid Google Token"})
+        // ถ้า Verify ไม่ผ่าน (Token เน่า/ปลอม) จะส่ง 401 กลับไป
+        c.JSON(401, gin.H{"error": "Invalid Google Access Token"})
         return
     }
 
-    // 3. ใช้ฟังก์ชันเดิมที่คุณมี ดึง Role จาก DB
+    // 3. ดึง Role จาก DB ด้วย email ที่ได้มาจาก Google
     role, err := h.repo.GetRoleByEmail(googleUser.Email)
     if err != nil || role == "" {
         c.JSON(401, gin.H{"error": "User not registered in our system"})
         return
     }
 
-    // 4. ออก JWT ของเราเอง!
+    // 4. ออก JWT ของเราเอง (ส่ง role เข้าไป)
     myToken, err := utils.GenerateToken(role)
     if err != nil {
-        c.JSON(500, gin.H{"error": "Could not generate token"})
+        c.JSON(500, gin.H{"error": "Internal server error: token generation failed"})
         return
     }
 
