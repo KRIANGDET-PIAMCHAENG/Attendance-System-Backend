@@ -1,29 +1,41 @@
 package repository
 
 import (
-	"my-app/internal/entity"
+	//"context"
+	"fmt"
+	//"my-app/internal/entity"
+
 	"gorm.io/gorm"
 )
 
-type UserRepository interface {
-	FindByEmail(email string) (*entity.UserInfo, error)
-}
-
-type userRepository struct {
+type UserRepo struct {
 	db *gorm.DB
 }
 
-func NewUserRepository(db *gorm.DB) UserRepository {
-	return &userRepository{db: db}
+func NewUserRepo(db *gorm.DB) *UserRepo {
+	return &UserRepo{db: db}
 }
 
-// ฟังก์ชันค้นหา User จาก Email
-func (r *userRepository) FindByEmail(email string) (*entity.UserInfo, error) {
-	var user entity.UserInfo
-	// ค้นหาในตาราง UserInfo โดยดู column email
-	result := r.db.Where("email = ?", email).First(&user)
+func (r *UserRepo) GetRoleByEmail(email string) (string, error) {
+	var roleType string
+
+	query := `  SELECT r.role_type
+            FROM user_info ui
+            JOIN user_roles ur ON ui.user_id = ur.user_id
+            JOIN role r ON ur.role_id = r.role_id
+            WHERE ui.email = $1
+            LIMIT 1
+         `
+
+	result := r.db.Raw(query, email).Scan(&roleType)
+
 	if result.Error != nil {
-		return nil, result.Error
+		return "", result.Error
 	}
-	return &user, nil
+
+	if result.RowsAffected == 0 {
+		return "" , fmt.Errorf("role not found email : %s", email)
+	}
+
+	return roleType, nil
 }

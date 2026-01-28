@@ -1,48 +1,51 @@
 package handler
 
-import (
-	"net/http"
-	"my-app/internal/service"
-	"encoding/json"
+import(
+	"my-app/internal/repository" 
+	"github.com/gin-gonic/gin"
+	"my-app/pkg/utils"
 )
 
-type AuthHandler struct {
-	authService service.AuthService
+type UserHandler struct {
+	repo *repository.UserRepo 
 }
 
-func NewAuthHandler(authService service.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
+func NewUserHandler(repo *repository.UserRepo) *UserHandler {
+	return &UserHandler{repo: repo}
 }
 
-// Request struct
-type GoogleLoginRequest struct {
-	Code string `json:"code"`
-}
 
-func (h *AuthHandler) GoogleLogin(w http.ResponseWriter, r *http.Request) {
-	// 1. Parse JSON body
-	var req GoogleLoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
+func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
+    // 1. รับ Google Token จาก Client
+    // (สมมติว่า Client ส่ง JSON {"token": "google_access_token"})
+    var input struct { Token string `json:"token"` }
+    if err := c.ShouldBindJSON(&input); err != nil {
+        c.JSON(400, gin.H{"error": "Invalid request"})
+        return
+    }
 
-	// 2. Call Service
-	sessionID, err := h.authService.LoginWithGoogle(r.Context(), req.Code)
-	if err != nil {
-		if err.Error() == "user_not_found" {
-			// ตอบ Frontend ว่าหา user ไม่เจอ
-			http.Error(w, "User not found within organization", http.StatusUnauthorized)
-			return
-		}
-		http.Error(w, "Login failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+    // 2. [SKIP] ตรงนี้คุณต้องเขียนฟังก์ชันไป Verify กับ Google API 
+    // เพื่อให้ได้ email มา (สมมติว่าได้ email มาแล้ว)
+    googleUser, err := utils.VerifyGoogleToken(input.Token)
+    if err != nil {
+        c.JSON(401, gin.H{"error": "Invalid Google Token"})
+        return
+    }
 
-	// 3. Success -> Return Session ID
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":    "Login successful",
-		"session_id": sessionID,
-	})
+    // 3. ใช้ฟังก์ชันเดิมที่คุณมี ดึง Role จาก DB
+    role, err := h.repo.GetRoleByEmail(googleUser.Email)
+    if err != nil || role == "" {
+        c.JSON(401, gin.H{"error": "User not registered in our system"})
+        return
+    }
+
+    // 4. ออก JWT ของเราเอง!
+    myToken, err := utils.GenerateToken(role)
+    if err != nil {
+        c.JSON(500, gin.H{"error": "Could not generate token"})
+        return
+    }
+
+    // 5. ส่งกลับไปให้ Client
+    c.JSON(200, gin.H{"access_token": myToken})
 }
