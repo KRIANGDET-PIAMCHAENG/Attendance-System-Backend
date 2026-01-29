@@ -35,7 +35,6 @@ func VerifyGoogleToken(idToken string) (*GoogleUser, error) {
 	return user, nil
 }
 
-// ตัวอย่างการ Verify ด้วย Access Token (ต้องแก้ใน pkg/utils/google.go)
 func VerifyGoogleAccessToken(accessToken string) (*GoogleUser, error) {
     resp, err := http.Get("https://www.googleapis.com/oauth2/v3/userinfo?access_token=" + accessToken)
     if err != nil {
@@ -43,12 +42,21 @@ func VerifyGoogleAccessToken(accessToken string) (*GoogleUser, error) {
     }
     defer resp.Body.Close()
 
+    // 1. แก้ตรงนี้: เพิ่ม Picture ในโครงสร้างรับข้อมูลจาก Google
     var res struct {
-        Email string `json:"email"`
-        Name  string `json:"name"`
+        Email   string `json:"email"`
+        Name    string `json:"name"`
+        Picture string `json:"picture"` // <--- Google ส่งมาใน key ชื่อ "picture"
     }
+
     if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
         return nil, err
     }
-    return &GoogleUser{Email: res.Email, Name: res.Name}, nil
+
+    // 2. แก้ตรงนี้: ส่งค่า Picture เข้าไปใน GoogleUser struct
+    return &GoogleUser{
+        Email:   res.Email,
+        Name:    res.Name,
+        Picture: res.Picture, // <--- ตอนนี้ค่าจะไม่ว่างแล้ว!
+    }, nil
 }
