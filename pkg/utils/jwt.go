@@ -5,7 +5,7 @@ import (
 	
 )
 
-var secretKey = "R1clvDeLZgp5knHvm0WLkBvqMD51khuRBzw1BTjXjH8="
+var secretKey = []byte("R1clvDeLZgp5knHvm0WLkBvqMD51khuRBzw1BTjXjH8=")
 
 func GenerateToken(role string) (string, error) {
     

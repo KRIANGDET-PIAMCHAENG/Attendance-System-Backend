@@ -45,5 +45,8 @@ func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
     }
 
     // 5. ส่งกลับไปให้ Client
-    c.JSON(200, gin.H{"access_token": myToken})
+    c.JSON(200, gin.H{
+    "access_token": myToken,
+    "role":         role, // เพิ่มบรรทัดนี้
+   })
 }
