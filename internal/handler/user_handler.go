@@ -48,6 +48,7 @@ func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
     c.JSON(200, gin.H{
     "access_token": myToken,
     "role":         role, // เพิ่มบรรทัดนี้
+	"Picture": googleUser.Picture,
    })
 }
 
