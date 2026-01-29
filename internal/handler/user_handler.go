@@ -22,36 +22,59 @@ func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
         return
     }
 
-    // 🚩 แก้จุดนี้: เปลี่ยนจาก VerifyGoogleToken เป็น VerifyGoogleAccessToken
+    // 1. Verify Google Token (เหมือนเดิม)
     googleUser, err := utils.VerifyGoogleAccessToken(input.Token) 
     if err != nil {
-        // ถ้า Verify ไม่ผ่าน (Token เน่า/ปลอม) จะส่ง 401 กลับไป
         c.JSON(401, gin.H{"error": "Invalid Google Access Token"})
         return
     }
 
-    // 3. ดึง Role จาก DB ด้วย email ที่ได้มาจาก Google
-    role, err := h.repo.GetRoleByEmail(googleUser.Email)
-    if err != nil || role == "" {
+    // 🚩 2. เปลี่ยนจุดนี้: จาก GetRoleByEmail เป็น GetUserInfoByEmail
+    // เราจะได้รับตัวแปร userInfo ซึ่งเป็นก้อน Struct (ID, Name, Email, Role) มาแทน
+    userInfo, err := h.repo.GetUserInfoByEmail(googleUser.Email)
+    if err != nil {
+        // ถ้าหาไม่เจอ แปลว่าอีเมลนี้ไม่ได้ลงทะเบียนไว้ในระบบเรา
         c.JSON(401, gin.H{"error": "User not registered in our system"})
         return
     }
 
-    // 4. ออก JWT ของเราเอง (ส่ง role เข้าไป)
-    myToken, err := utils.GenerateToken(role)
+    // 🚩 3. แก้จุดนี้: ส่ง userInfo.Role เข้าไปสร้าง JWT
+    myToken, err := utils.GenerateToken(userInfo.Role)
     if err != nil {
         c.JSON(500, gin.H{"error": "Internal server error: token generation failed"})
         return
     }
 
-    // 5. ส่งกลับไปให้ Client
+    // 🚩 4. แก้จุดส่งกลับ: แนบ userInfo ไปทั้งก้อนเลย
     c.JSON(200, gin.H{
-    "access_token": myToken,
-    "role":         role, // เพิ่มบรรทัดนี้
-	"Picture": googleUser.Picture,
-   })
+        "access_token": myToken,
+        "user":         userInfo,    // ส่ง ID, Name, Role ไปในก้อนเดียว
+        "picture":      googleUser.Picture,
+    })
+}
+
+func (h *UserHandler) GetUserInfo(c *gin.Context) {
+    // 1. รับ ID จาก Path Parameter (เช่น /api/user/:id)
+    id := c.Param("id")
+    if id == "" {
+        c.JSON(400, gin.H{"error": "User ID is required"})
+        return
+    }
+
+    // 2. เรียกใช้ Repo ที่เพิ่งทำไป
+    userInfo, err := h.repo.GetUserInfo(id)
+    if err != nil {
+        // หากไม่พบข้อมูลหรือเกิด Error ใน DB
+        c.JSON(404, gin.H{"error": err.Error()})
+        return
+    }
+
+    // 3. ส่งข้อมูลกลับ (ข้อมูลชุดใหญ่ที่มีทั้ง Phone, Gender, etc.)
+    c.JSON(200, userInfo)
 }
 
 func (h *UserHandler) Logout(c *gin.Context) {
    c.JSON(200,gin.H{"status" : "logout ok"})
 }
+
+

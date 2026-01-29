@@ -47,12 +47,11 @@ func main() {
 	// --- กลุ่ม API ที่ต้องมี JWT ถึงจะเข้าได้ (Protected) ---
 	// เมื่อคุณพร้อมใช้ Middleware ให้ Uncomment ส่วนนี้ออกครับ
 	
-	// api := r.Group("/api")
-	// api.Use(middleware.JWTMiddleware()) // ตัวกรองบัตรผ่าน (ต้องไปสร้างไฟล์นี้ใน internal/middleware)
-	// {
-	// 	// ตัวอย่าง API ที่ต้องใช้ Token เข้าถึง
-		
-	// }
+	api := r.Group("/api")
+	api.Use(middleware.JWTMiddleware()) // ตัวกรองบัตรผ่าน (ต้องไปสร้างไฟล์นี้ใน internal/middleware)
+	{
+		api.GET("/user_info/:id", userHdl.GetUserInfo) // เพิ่ม :id เข้าไป
+	}
 
 	logout := r.Group("/auth")
 	logout.Use(middleware.JWTMiddleware())
