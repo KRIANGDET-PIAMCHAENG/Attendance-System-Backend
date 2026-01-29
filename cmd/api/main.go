@@ -5,7 +5,7 @@ import (
 	"time"
 	"my-app/internal/handler"
 	"my-app/internal/repository"
-	// "my-app/internal/middleware" // Uncomment เมื่อเขียน middleware เสร็จ
+	"my-app/internal/middleware" // Uncomment เมื่อเขียน middleware เสร็จ
 	
 	"github.com/gin-contrib/cors" // เพิ่มตัวนี้เข้ามา
 	"github.com/gin-gonic/gin"
@@ -46,14 +46,20 @@ func main() {
 
 	// --- กลุ่ม API ที่ต้องมี JWT ถึงจะเข้าได้ (Protected) ---
 	// เมื่อคุณพร้อมใช้ Middleware ให้ Uncomment ส่วนนี้ออกครับ
-	/*
-	api := r.Group("/api")
-	api.Use(middleware.JWTMiddleware()) // ตัวกรองบัตรผ่าน (ต้องไปสร้างไฟล์นี้ใน internal/middleware)
+	
+	// api := r.Group("/api")
+	// api.Use(middleware.JWTMiddleware()) // ตัวกรองบัตรผ่าน (ต้องไปสร้างไฟล์นี้ใน internal/middleware)
+	// {
+	// 	// ตัวอย่าง API ที่ต้องใช้ Token เข้าถึง
+		
+	// }
+
+	logout := r.Group("/auth")
+	logout.Use(middleware.JWTMiddleware())
 	{
-		// ตัวอย่าง API ที่ต้องใช้ Token เข้าถึง
-		api.GET("/user-role/:email", userHdl.GetRole) 
+		logout.POST("/logout",userHdl.Logout)
 	}
-	*/
+	
 
 	// 4. Start Server
 	log.Println("🚀 Server running on http://localhost:3000")

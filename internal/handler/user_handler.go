@@ -50,3 +50,7 @@ func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
     "role":         role, // เพิ่มบรรทัดนี้
    })
 }
+
+func (h *UserHandler) Logout(c *gin.Context) {
+   c.JSON(200,gin.H{"status" : "logout ok"})
+}
