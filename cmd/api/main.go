@@ -58,6 +58,39 @@ func main() {
 	{
 		logout.POST("/logout",userHdl.Logout)
 	}
+
+	/*
+		api.GET("/profile/me", func(c *gin.Context) {
+            c.JSON(200, gin.H{
+                "user_id":       "1800400370922",
+                "employee_id":   "6630300394",
+                "email":         "teetat.p@ku.th",
+                "fullname_eng":  "Teetat Pitanupong",
+                "fullname_thai": "ธีธัช ปิตานุพงศ์",
+                "gender":        "ชาย",
+                "nationality":   "ไทย",
+                "phone":         "098-445-1535",
+                "role_init":     "approver",
+            })
+        })
+	*/
+
+	r.GET("/profile/me", func(c *gin.Context) {
+        c.JSON(200, gin.H{
+            "user_id":       "1800400370922",
+            "employee_id":   "6630300394",
+            "email":         "teetat.p@ku.th",
+            "fullname_eng":  "Teetat Pitanupong",
+            "fullname_thai": "ธีธัช ปิตานุพงศ์",
+            "gender":        "ชาย",
+            "nationality":   "ไทย",
+            "phone":         "098-445-1535",
+            "role_init":     "approver",
+        })
+    })
+
+
+	
 	
 
 	// 4. Start Server
