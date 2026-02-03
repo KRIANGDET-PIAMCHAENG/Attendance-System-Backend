@@ -43,15 +43,7 @@ func main() {
 		// หน้าด่านรับ Access Token จาก Google เพื่อแลก JWT ของเรา
 		auth.POST("/google", userHdl.LoginWithGoogle)
 	}
-
-	// --- กลุ่ม API ที่ต้องมี JWT ถึงจะเข้าได้ (Protected) ---
-	// เมื่อคุณพร้อมใช้ Middleware ให้ Uncomment ส่วนนี้ออกครับ
 	
-	api := r.Group("/api")
-	api.Use(middleware.JWTMiddleware()) // ตัวกรองบัตรผ่าน (ต้องไปสร้างไฟล์นี้ใน internal/middleware)
-	{
-		api.GET("/user_info/:id", userHdl.GetUserInfo) // เพิ่ม :id เข้าไป
-	}
 
 	logout := r.Group("/auth")
 	logout.Use(middleware.JWTMiddleware())
@@ -59,6 +51,18 @@ func main() {
 		logout.POST("/logout",userHdl.Logout)
 	}
 
+	profile := r.Group("/profile")
+	profile.Use(middleware.JWTMiddleware())
+	{
+		profile.GET("/me",userHdl.GetUserInfo)
+	}
+
+	api := r.Group("/api")
+	api.Use(middleware.JWTMiddleware())
+	{
+		api.GET("/init",userHdl.InitInfo)
+	}
+	
 	/*
 		api.GET("/profile/me", func(c *gin.Context) {
             c.JSON(200, gin.H{
@@ -75,22 +79,19 @@ func main() {
         })
 	*/
 
-	r.GET("/profile/me", func(c *gin.Context) {
-        c.JSON(200, gin.H{
-            "user_id":       "1800400370922",
-            "employee_id":   "6630300394",
-            "email":         "teetat.p@ku.th",
-            "fullname_eng":  "Teetat Pitanupong",
-            "fullname_thai": "ธีธัช ปิตานุพงศ์",
-            "gender":        "ชาย",
-            "nationality":   "ไทย",
-            "phone":         "098-445-1535",
-            "role_init":     "approver",
-        })
-    })
-
-
-	
+	// r.GET("/profile/me", func(c *gin.Context) {
+    //     c.JSON(200, gin.H{
+    //         "user_id":       "1800400370922",
+    //         "employee_id":   "6630300394",
+    //         "email":         "teetat.p@ku.th",
+    //         "fullname_eng":  "Teetat Pitanupong",
+    //         "fullname_thai": "ธีธัช ปิตานุพงศ์",
+    //         "gender":        "ชาย",
+    //         "nationality":   "ไทย",
+    //         "phone":         "098-445-1535",
+    //         "role_init":     "approver",
+    //     })
+    // })
 	
 
 	// 4. Start Server

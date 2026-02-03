@@ -3,7 +3,7 @@ package middleware
 import (
 	"net/http"
 	"strings"
-	//"my-app/pkg/utils" // ตรวจสอบ path ให้ตรงกับโปรเจกต์คุณ
+	"my-app/pkg/utils" // ตรวจสอบ path ให้ตรงกับโปรเจกต์คุณ
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
@@ -30,27 +30,26 @@ func JWTMiddleware() gin.HandlerFunc {
 		tokenString := parts[1]
 
 		// 3. ตรวจสอบ Token (Parse และ Verify Signature)
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-			// ตรวจสอบว่าใช้ Signing Method เดียวกันไหม (HS256)
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, jwt.ErrSignatureInvalid
-			}
-			// คืนค่า Secret Key ที่เราใช้ (ต้องตรงกับใน pkg/utils/jwt.go)
-			return []byte("R1clvDeLZgp5knHvm0WLkBvqMD51khuRBzw1BTjXjH8="), nil
-		})
+		token, err := jwt.ParseWithClaims(tokenString, &utils.MyCustomClaims{}, func(token *jwt.Token) (interface{}, error) {
+            if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+                return nil, jwt.ErrSignatureInvalid
+            }
+            return []byte("R1clvDeLZgp5knHvm0WLkBvqMD51khuRBzw1BTjXjH8="), nil
+        })
 
-		if err != nil || !token.Valid {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
-			c.Abort()
-			return
-		}
+        if err != nil || !token.Valid {
+            c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+            c.Abort()
+            return
+        }
 
-		// 4. (Optional) ดึงข้อมูลจาก Payload ออกมาฝากไว้ใน Context
-		// เพื่อให้ Handler ตัวต่อไปรู้ว่าคนนี้ Role อะไร
-		if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-			c.Set("role", claims["role"])
-		}
+        // 🚩 4. ดึงข้อมูลจาก Payload (Claims) ออกมาฝากไว้ใน Context
+        if claims, ok := token.Claims.(*utils.MyCustomClaims); ok && token.Valid {
+            // ฝากทั้ง ID และ Role ไว้ใน Context
+            c.Set("user_id", claims.UserID)
+            c.Set("user_role", claims.Role)
+        }
 
-		c.Next() // บัตรผ่าน! ไปทำงานที่ Handler ต่อได้
+        c.Next()
 	}
 }

@@ -1,6 +1,7 @@
 package handler
 
 import(
+    "log"
 	"my-app/internal/repository" 
 	"github.com/gin-gonic/gin"
 	"my-app/pkg/utils"
@@ -38,8 +39,21 @@ func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
         return
     }
 
+    userRole, err := h.repo.AllRole(userInfo.UserID)
+    if err != nil {
+        // ถ้าหาไม่เจอ แปลว่าอีเมลนี้ไม่ได้ลงทะเบียนไว้ในระบบเรา
+        c.JSON(401, gin.H{"error": "User not registered in our system"})
+        return
+    }
+
+    err_update := h.repo.UpdatePicture(googleUser.Email, googleUser.Picture)
+    if err_update != nil {
+        log.Printf("Failed to update picture: %v", err)
+        // ไม่ต้อง return error ก็ได้เพื่อให้ User ยัง Login ต่อได้แม้รูปจะอัปเดตไม่สำเร็จ
+    }
+
     // 🚩 3. แก้จุดนี้: ส่ง userInfo.Role เข้าไปสร้าง JWT
-    myToken, err := utils.GenerateToken(userInfo.Role)
+    myToken, err := utils.GenerateToken(userInfo.Role,userInfo.UserID)
     if err != nil {
         c.JSON(500, gin.H{"error": "Internal server error: token generation failed"})
         return
@@ -48,33 +62,55 @@ func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
     // 🚩 4. แก้จุดส่งกลับ: แนบ userInfo ไปทั้งก้อนเลย
     c.JSON(200, gin.H{
         "access_token": myToken,
-        "user":         userInfo,    // ส่ง ID, Name, Role ไปในก้อนเดียว
+        "user":         userInfo,    // ส่ง ID, Name ไปในก้อนเดียว
+        "role":         userRole,
         "picture":      googleUser.Picture,
     })
 }
 
-func (h *UserHandler) GetUserInfo(c *gin.Context) {
-    // 1. รับ ID จาก Path Parameter (เช่น /api/user/:id)
-    id := c.Param("id")
-    if id == "" {
-        c.JSON(400, gin.H{"error": "User ID is required"})
-        return
-    }
 
-    // 2. เรียกใช้ Repo ที่เพิ่งทำไป
-    userInfo, err := h.repo.GetUserInfo(id)
-    if err != nil {
-        // หากไม่พบข้อมูลหรือเกิด Error ใน DB
-        c.JSON(404, gin.H{"error": err.Error()})
-        return
-    }
 
-    // 3. ส่งข้อมูลกลับ (ข้อมูลชุดใหญ่ที่มีทั้ง Phone, Gender, etc.)
-    c.JSON(200, userInfo)
-}
 
 func (h *UserHandler) Logout(c *gin.Context) {
    c.JSON(200,gin.H{"status" : "logout ok"})
+}
+
+func (h *UserHandler) GetUserInfo(c *gin.Context) {
+    // 🚩 ดึง user_id ที่ Middleware ฝากไว้ (แกะมาจาก Token)
+    userID, exists := c.Get("user_id")
+    if !exists {
+        c.JSON(500, gin.H{"error": "User ID not found in context"})
+        return
+    }
+
+    // เรียกใช้ Repo ด้วย ID ที่ได้จาก Token โดยตรง
+    // ป้องกันการที่ User แอบเปลี่ยน ID ใน URL (BOLA Attack Prevention)
+    userInfo, err := h.repo.GetUserInfo(userID.(string))
+    if err != nil {
+        c.JSON(404, gin.H{"error": "Profile not found"})
+        return
+    }
+
+    c.JSON(200, userInfo)
+}
+
+func (h *UserHandler) InitInfo(c *gin.Context) {
+    // 1. ดึง user_id จาก Middleware (Context)
+    userID, exists := c.Get("user_id")
+    if !exists {
+        c.JSON(401, gin.H{"error": "Unauthorized: No user ID found"})
+        return
+    }
+
+    // 2. เรียก Repo เพื่อดึงข้อมูลตั้งต้น
+    initData, err := h.repo.GetInitInfo(userID.(string))
+    if err != nil {
+        c.JSON(500, gin.H{"error": "Failed to fetch initialization data"})
+        return
+    }
+
+    // 3. ส่งข้อมูลกลับไปให้ Flutter
+    c.JSON(200, initData)
 }
 
 

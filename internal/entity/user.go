@@ -12,6 +12,7 @@ type UserInfo struct{
 	Phone string `gorm:"column:phone" json:"phone"`
 	RoleInit string `gorm:"column:role_init" json:"role_init"`
 	
+	
 }
 
 type Role struct {
