@@ -16,7 +16,7 @@ type UserInfoLogin struct {
 	UserID  string `json:"user_id"`
 	Name    string `json:"name"`
 	Email   string `json:"email"`
-	RoleGen    string `json:"role_gen"`
+	RoleGen  string   `json:"-" gorm:"column:role"`
     Role []string `json:"role"`
     Picture      string `json:"picture"`
 }
