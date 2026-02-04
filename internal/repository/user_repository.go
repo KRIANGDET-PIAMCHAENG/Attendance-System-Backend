@@ -16,7 +16,9 @@ type UserInfoLogin struct {
 	UserID  string `json:"user_id"`
 	Name    string `json:"name"`
 	Email   string `json:"email"`
-	Role    string `json:"role"`
+	RoleGen    string `json:"role_gen"`
+    Role []string `json:"role"`
+    Picture      string `json:"picture"`
 }
 
 type UserRole struct {
@@ -121,52 +123,6 @@ func (r *UserRepo) GetUserInfo(id string) (*UserInfo, error) {
 //     return roleType, nil
 // }
 
-func (r *UserRepo) GetUserInfoByEmail(email string) (*UserInfoLogin, error) {
-    var info UserInfoLogin
-
-    // 🚩 ต้องใช้ fullname_eng AS name (หรือ fullname_thai แล้วแต่จะเลือก)
-    // เพื่อให้ GORM Scan เข้าฟิลด์ Name ใน Struct ได้
-    query := `
-        SELECT ui.user_id, ui.fullname_eng AS name, ui.email, r.role_type AS role
-        FROM user_info ui
-        JOIN user_roles ur ON ui.user_id = ur.user_id
-        JOIN role r ON ur.role_id = r.role_id
-        WHERE LOWER(ui.email) = LOWER(?)
-        LIMIT 1
-    `
-
-    result := r.db.Raw(query, email).Scan(&info)
-
-    if result.Error != nil {
-        return nil, result.Error
-    }
-
-    if result.RowsAffected == 0 {
-        return nil, fmt.Errorf("user not found with email: %s", email)
-    }
-
-    return &info, nil
-}
-
-// UpdatePicture ใช้สำหรับอัปเดต URL รูปภาพของ User โดยอิงจาก Email
-func (r *UserRepo) UpdatePicture(email string, pictureURL string) error {
-    // ใช้ Exec เพื่อรัน Raw SQL ในการ Update
-    query := `UPDATE user_info SET picture = ? WHERE LOWER(email) = LOWER(?)`
-    
-    result := r.db.Exec(query, pictureURL, email)
-    
-    if result.Error != nil {
-        return result.Error
-    }
-    
-    // ตรวจสอบว่ามีการอัปเดตจริงไหม (เผื่อไม่มี email นี้ในระบบ)
-    if result.RowsAffected == 0 {
-        return fmt.Errorf("no user found with email: %s", email)
-    }
-    
-    return nil
-}
-
 func (r *UserRepo) AllRole(id string) ([]string, error) {
     var roleNames []string
 
@@ -187,6 +143,58 @@ func (r *UserRepo) AllRole(id string) ([]string, error) {
     }
 
     return roleNames, nil
+}
+
+func (r *UserRepo) GetUserInfoByEmail(email string) (*UserInfoLogin, error) {
+    var info UserInfoLogin
+
+    // 🚩 ต้องใช้ fullname_eng AS name (หรือ fullname_thai แล้วแต่จะเลือก)
+    // เพื่อให้ GORM Scan เข้าฟิลด์ Name ใน Struct ได้
+    query := `
+        SELECT ui.user_id, ui.fullname_eng AS name, ui.email , r.role_type AS role_gen, picture
+        FROM user_info ui
+        JOIN user_roles ur ON ui.user_id = ur.user_id
+        JOIN role r ON ur.role_id = r.role_id
+        WHERE LOWER(ui.email) = LOWER(?)
+        LIMIT 1
+    `
+
+    result := r.db.Raw(query, email).Scan(&info)
+
+    if result.Error != nil {
+        return nil, result.Error
+    }
+
+    if result.RowsAffected == 0 {
+        return nil, fmt.Errorf("user not found with email: %s", email)
+    }
+
+    role, err := r.AllRole(info.UserID)
+    if err != nil {
+        return nil, err
+    }
+
+    info.Role = role
+    return &info, nil
+}
+
+// UpdatePicture ใช้สำหรับอัปเดต URL รูปภาพของ User โดยอิงจาก Email
+func (r *UserRepo) UpdatePicture(email string, pictureURL string) error {
+    // ใช้ Exec เพื่อรัน Raw SQL ในการ Update
+    query := `UPDATE user_info SET picture = ? WHERE LOWER(email) = LOWER(?)`
+    
+    result := r.db.Exec(query, pictureURL, email)
+    
+    if result.Error != nil {
+        return result.Error
+    }
+    
+    // ตรวจสอบว่ามีการอัปเดตจริงไหม (เผื่อไม่มี email นี้ในระบบ)
+    if result.RowsAffected == 0 {
+        return fmt.Errorf("no user found with email: %s", email)
+    }
+    
+    return nil
 }
 
 func (r *UserRepo) GetInitInfo(id string) (*InitInfoResponse, error) {

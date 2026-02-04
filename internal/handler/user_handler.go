@@ -39,12 +39,12 @@ func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
         return
     }
 
-    userRole, err := h.repo.AllRole(userInfo.UserID)
-    if err != nil {
-        // ถ้าหาไม่เจอ แปลว่าอีเมลนี้ไม่ได้ลงทะเบียนไว้ในระบบเรา
-        c.JSON(401, gin.H{"error": "User not registered in our system"})
-        return
-    }
+    // userRole, err := h.repo.AllRole(userInfo.UserID)
+    // if err != nil {
+    //     // ถ้าหาไม่เจอ แปลว่าอีเมลนี้ไม่ได้ลงทะเบียนไว้ในระบบเรา
+    //     c.JSON(401, gin.H{"error": "User not registered in our system"})
+    //     return
+    // }
 
     err_update := h.repo.UpdatePicture(googleUser.Email, googleUser.Picture)
     if err_update != nil {
@@ -53,7 +53,7 @@ func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
     }
 
     // 🚩 3. แก้จุดนี้: ส่ง userInfo.Role เข้าไปสร้าง JWT
-    myToken, err := utils.GenerateToken(userInfo.Role,userInfo.UserID)
+    myToken, err := utils.GenerateToken(userInfo.RoleGen,userInfo.UserID)
     if err != nil {
         c.JSON(500, gin.H{"error": "Internal server error: token generation failed"})
         return
@@ -62,9 +62,9 @@ func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
     // 🚩 4. แก้จุดส่งกลับ: แนบ userInfo ไปทั้งก้อนเลย
     c.JSON(200, gin.H{
         "access_token": myToken,
-        "user":         userInfo,    // ส่ง ID, Name ไปในก้อนเดียว
-        "role":         userRole,
-        "picture":      googleUser.Picture,
+        "user":         userInfo,   
+        //"role":         userRole,
+        // "picture":      googleUser.Picture,
     })
 }
 
