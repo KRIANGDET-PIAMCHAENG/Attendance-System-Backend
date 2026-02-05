@@ -15,6 +15,7 @@ func main() {
 	// 1. Database Connection
 	// อย่าลืมเช็ก Password และ DSN ให้ตรงกับที่ใช้ใน Docker นะครับ
 	dsn := "postgres://postgres:admin1234@localhost:5432/postgres?sslmode=disable"
+	//dsn := "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
 	db, err := repository.NewDB(dsn)
 	if err != nil {
 		log.Fatal("Cannot connect to DB:", err)

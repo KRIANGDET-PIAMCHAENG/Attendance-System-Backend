@@ -1,0 +1,8 @@
+# Database backups
+*.sql
+
+# Go distribution files
+*.tar.gz
+
+# Local data/previews
+preview.json

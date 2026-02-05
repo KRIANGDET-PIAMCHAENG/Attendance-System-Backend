@@ -9,8 +9,20 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+var IsTestMode = false
+
 func JWTMiddleware() gin.HandlerFunc {
+
+
 	return func(c *gin.Context) {
+
+		if IsTestMode {
+			// ยัดข้อมูลของคุณ Kriangdet เข้าไปใน Context เลยไม่ต้องเช็ก Token
+			c.Set("user_id", "1250101587399")
+			c.Next()
+			return
+		}
+
 		// 1. ดึง Header "Authorization" ออกมา
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
