@@ -130,7 +130,7 @@ func (r *UserRepo) GetUserInfo(id string) (*UserInfo, error) {
 	initRole := UserRole{
 		RoleID:    "000",
 		RoleName:  info.RoleInit,
-		RoleColor: "#808080",
+		RoleColor: "808080",
 	}
 
 	// เอา Initial Role ไว้หน้าสุด และตามด้วย Roles อื่นๆ
