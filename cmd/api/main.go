@@ -62,6 +62,12 @@ func main() {
 	api.Use(middleware.JWTMiddleware())
 	{
 		api.GET("/init",userHdl.InitInfo)
+
+		api.GET("/users", userHdl.GetAllUsers)
+
+		api.GET("/roles", userHdl.GetAllRoles)
+
+		api.GET("/leave/quotas/:id", userHdl.GetUserLeaveQuotas)
 	}
 	
 	/*

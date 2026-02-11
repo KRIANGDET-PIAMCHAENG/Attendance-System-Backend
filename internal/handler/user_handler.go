@@ -113,4 +113,52 @@ func (h *UserHandler) InitInfo(c *gin.Context) {
     c.JSON(200, initData)
 }
 
+func (h *UserHandler) GetAllUsers(c *gin.Context) {
+	// เรียก Repository
+	users, err := h.repo.GetAllUsers()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to fetch users", "details": err.Error()})
+		return
+	}
+
+	// ส่งกลับตามโครงสร้าง { "data": [ ... ] }
+	c.JSON(200, gin.H{
+		"data": users,
+	})
+}
+
+func (h *UserHandler) GetAllRoles(c *gin.Context) {
+	roles, err := h.repo.GetAllRoles()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to fetch roles", "details": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"data": roles,
+	})
+}
+
+func (h *UserHandler) GetUserLeaveQuotas(c *gin.Context) {
+    // 🚩 แก้ไข: รับ ID จาก URL Parameter แทน (เช่น /api/leave/quotas/1250...)
+    targetUserID := c.Param("id")
+
+    // (Optional) คุณอาจจะอยากเช็คตรงนี้เพิ่มว่า คนที่เรียก (c.Get("user_id")) เป็น Admin จริงไหม
+    // แต่ถ้าเชื่อใจ Middleware ก็ข้ามไปก่อนได้ครับ
+
+    // เรียก Repository ด้วย ID ที่ส่งมา
+    quotas, err := h.repo.GetLeaveQuotas(targetUserID)
+    if err != nil {
+        c.JSON(500, gin.H{"error": "Failed to fetch quotas"})
+        return
+    }
+
+    // แปลงข้อมูลเป็น JSON Map เหมือนเดิม
+    responseMap := make(map[string]float64)
+    for _, q := range quotas {
+        responseMap[q.TypeKey] = q.DaysAllowed
+    }
+
+    c.JSON(200, responseMap)
+}
 

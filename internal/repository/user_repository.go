@@ -54,6 +54,40 @@ type InitInfoResponse struct {
 	Picture string `json:"picture"`
 }
 
+type RoleAPI struct {
+	RoleID    string `json:"role-id"`
+	RoleName  string `json:"role-name"`
+	RoleColor string `json:"role-color"`
+}
+type UserAPI struct {
+    ID          string    `json:"id"`
+    NameTH      string    `json:"name-th"`
+    NameEN      string    `json:"name-en"`
+    AvatarURL   string    `json:"avatar-url"`
+    EmployeeID  string    `json:"employee-id"`
+    Gender      string    `json:"gender"`
+    Nationality string    `json:"nationality"`
+    Phone       string    `json:"phone"`
+    Email       string    `json:"email"`
+    InitialRole string    `json:"initial-role"`
+    
+    // 🚩 เติม gorm:"-" ต่อท้ายแบบนี้ครับ
+    Roles       []RoleAPI `json:"roles" gorm:"-"` 
+}
+
+type RoleMemberAPI struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	Color  string `json:"color"`
+	Member int    `json:"member"` // ตัวนี้จะเก็บค่าจากการ COUNT
+}
+
+type LeaveQuotaResult struct {
+    TypeKey     string  `gorm:"column:name_en"`    // เช่น sick, personal
+    DaysAllowed float64 `gorm:"column:days_allowed"` // เช่น 60, 45
+}
+
 func NewUserRepo(db *gorm.DB) *UserRepo {
 	return &UserRepo{db: db}
 }
@@ -223,4 +257,101 @@ func (r *UserRepo) GetInitInfo(id string) (*InitInfoResponse, error) {
 	res.AllRoles = roles
 
 	return &res, nil
+}
+
+func (r *UserRepo) GetAllUsers() ([]UserAPI, error) {
+	var users []UserAPI
+
+	// 1. ดึงข้อมูล User ทั้งหมดจากตาราง user_info
+	// แมปคอลัมน์ DB ให้ตรงกับ Struct UserAPI
+	query := `
+		SELECT 
+			user_id as id,
+			fullname_thai as name_th,
+			fullname_eng as name_en,
+			picture as avatar_url,
+			employee_id,
+			gender,
+			nationality,
+			phone,
+			email,
+			role_init as initial_role
+		FROM user_info
+	`
+	
+	// ใช้ Scan เข้า Struct โดย GORM จะจับคู่ชื่อ field ให้ (หรือเรา alias ใน SQL ให้ตรงก็ได้)
+	result := r.db.Raw(query).Scan(&users)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	// 2. วนลูปเพื่อดึง Roles ของแต่ละ User (วิธีนี้ง่ายสุดและชัวร์เรื่อง Data)
+	for i := range users {
+		var roles []RoleAPI
+		roleQuery := `
+			SELECT r.role_id, r.role_name, r.role_color
+			FROM role r
+			JOIN user_roles ur ON r.role_id = ur.role_id
+			WHERE ur.user_id = ?
+		`
+		// ดึง Role และใส่เข้าไปใน User คนนั้นๆ
+		r.db.Raw(roleQuery, users[i].ID).Scan(&roles)
+		
+		// ถ้าไม่มี Role ให้เป็น Array ว่างแทน null (เพื่อความสวยงามของ JSON)
+		if roles == nil {
+			roles = []RoleAPI{}
+		}
+		users[i].Roles = roles
+	}
+
+	return users, nil
+}
+
+func (r *UserRepo) GetAllRoles() ([]RoleMemberAPI, error) {
+	var roles []RoleMemberAPI
+
+	// SQL Query:
+	// 1. เลือกข้อมูล Role
+	// 2. ใช้ LEFT JOIN กับ user_roles เพื่อดึงคนที่ถือ Role นี้
+	// 3. ใช้ COUNT(ur.user_id) เพื่อนับจำนวนคน
+	// 4. GROUP BY เพื่อรวมกลุ่มตาม Role
+	query := `
+		SELECT 
+			r.role_id AS id,
+			r.role_name AS name,
+			r.role_type AS type,
+			r.role_color AS color,
+			COUNT(ur.user_id) AS member
+		FROM role r
+		LEFT JOIN user_roles ur ON r.role_id = ur.role_id
+		GROUP BY r.role_id, r.role_name, r.role_type, r.role_color
+		ORDER BY r.role_id
+	`
+	
+	result := r.db.Raw(query).Scan(&roles)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	return roles, nil
+}
+
+
+func (r *UserRepo) GetLeaveQuotas(userID string) ([]LeaveQuotaResult, error) {
+    var results []LeaveQuotaResult
+
+    // Join ตาราง balances กับ types เพื่อเอาชื่อภาษาอังกฤษ (name_en) มาเป็น Key
+    query := `
+        SELECT lt.name_en, lb.days_allowed
+        FROM leave_balances lb
+        JOIN leave_types lt ON lb.leave_type_id = lt.id
+        WHERE lb.user_id = ?
+    `
+
+    err := r.db.Raw(query, userID).Scan(&results).Error
+    if err != nil {
+        return nil, err
+    }
+
+    return results, nil
 }
