@@ -162,3 +162,106 @@ func (h *UserHandler) GetUserLeaveQuotas(c *gin.Context) {
     c.JSON(200, responseMap)
 }
 
+// ... (code เดิม)
+
+func (h *UserHandler) UpdateUser(c *gin.Context) {
+	// 1. รับ ID จาก URL (เช่น /api/users/55555...)
+	id := c.Param("id")
+
+	var req repository.UpdateUserRequest
+
+	// 2. Bind JSON (เฉพาะ Body)
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid JSON format", "details": err.Error()})
+		return
+	}
+
+	// 3. ส่ง ID และ Struct ไป Repo
+	err := h.repo.UpdateUserInfo(id, req)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to update user", "details": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"status":  "success",
+		"message": "User updated successfully",
+	})
+}
+
+func (h *UserHandler) UpdateRole(c *gin.Context) {
+	var req repository.UpdateRoleRequest
+
+	// 1. แปลง JSON
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid JSON format", "details": err.Error()})
+		return
+	}
+
+	// 2. เรียก Repo
+	err := h.repo.UpdateRole(req)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to update role", "details": err.Error()})
+		return
+	}
+
+	// 3. ตอบกลับ
+	c.JSON(200, gin.H{
+		"status":  "success",
+		"message": "Role updated successfully",
+		"data":    req,
+	})
+}
+
+// ... (code เดิม)
+
+// 1. Handler Create User System
+func (h *UserHandler) CreateUserSystem(c *gin.Context) {
+	var req repository.CreateUserFullRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid JSON", "details": err.Error()})
+		return
+	}
+
+	if err := h.repo.CreateUserFull(req); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to create user", "details": err.Error()})
+		return
+	}
+	c.JSON(201, gin.H{"status": "success", "message": "User created successfully"})
+}
+
+func (h *UserHandler) UpdateUserRoles(c *gin.Context) {
+	id := c.Param("id")
+	
+	// 🚩 แก้ตรงนี้: เรียกใช้ UpdateUserRolesRequest (เติม s ตรง Role และ User นำหน้า)
+	var req repository.UpdateUserRolesRequest 
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid JSON", "details": err.Error()})
+		return
+	}
+
+	if err := h.repo.UpdateUserRoles(id, req.Roles); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to update roles", "details": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"status": "success"})
+}
+
+// 3. Handler Update Max Leave
+func (h *UserHandler) UpdateMaxLeave(c *gin.Context) {
+	id := c.Param("id") // รับ ID จาก URL
+	var req repository.MaxLeavePart
+	
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid JSON", "details": err.Error()})
+		return
+	}
+
+	if err := h.repo.UpdateUserMaxLeave(id, req); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to update leave quotas", "details": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"status": "success"})
+}
+

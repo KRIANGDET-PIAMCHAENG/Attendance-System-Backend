@@ -4,7 +4,7 @@ import (
 	//"context"
 	"fmt"
 	//"my-app/internal/entity"
-
+	"time"
 	"gorm.io/gorm"
 )
 
@@ -22,29 +22,27 @@ type UserInfoLogin struct {
 }
 
 type UserRole struct {
-	RoleName  string `json:"role_name"`
-	RoleColor string `json:"role_color"`
+	RoleID    string `json:"role-id"`    // เปลี่ยนเป็น role-id
+	RoleName  string `json:"role-name"`  // เปลี่ยนเป็น role-name
+	RoleColor string `json:"role-color"` // เปลี่ยนเป็น role-color
 }
 
 type UserInfo struct {
-	UserID       string `json:"user_id"`
-	EmployeeID   string `json:"employee_id"`
-	Email        string `json:"email"`
+	// ใส่ gorm column tag ให้ครบทุกฟิลด์เพื่อความชัวร์
+	UserID       string `json:"user_id" gorm:"column:user_id"`
+	EmployeeID   string `json:"employee_id" gorm:"column:employee_id"`
+	Email        string `json:"email" gorm:"column:email"`
 	FullNameThai string `json:"fullname_thai" gorm:"column:fullname_thai"`
+	FullNameEng  string `json:"fullname_eng" gorm:"column:fullname_eng"`
+	Gender       string `json:"gender" gorm:"column:gender"`
+	Nationality  string `json:"nationality" gorm:"column:nationality"`
+	Phone        string `json:"phone" gorm:"column:phone"`
+	RoleInit     string `json:"role_init" gorm:"column:role_init"`
+	Picture      string `json:"picture" gorm:"column:picture"`
 
-	// 🚩 เติม gorm:"column:fullname_eng"
-	FullNameEng string `json:"fullname_eng"  gorm:"column:fullname_eng"`
-	Gender      string `json:"gender"`
-	Nationality string `json:"nationality"`
-	Phone       string `json:"phone"`
-	RoleInit    string `json:"role_init"`
-	Picture     string `json:"picture"`
-	// เราอาจจะตัด Nationality หรือ Phone ออกถ้าหน้านั้นไม่ต้องโชว์
-	// เพื่อความปลอดภัยตามหลัก Privacy by Design
-
-	Roles []UserRole `json:"role_sys" gorm:"-"`
+	// เปลี่ยน JSON Key จาก role_sys เป็น roles ตามที่สั่ง
+	Roles []UserRole `json:"roles" gorm:"-"` 
 }
-
 type InitInfoResponse struct {
 	UserID   string   `json:"user_id"`
 	Name     string   `json:"name"`
@@ -88,52 +86,55 @@ type LeaveQuotaResult struct {
     DaysAllowed float64 `gorm:"column:days_allowed"` // เช่น 60, 45
 }
 
+type UpdateUserRequest struct {
+	NameTH      string `json:"name-th"`
+	NameEN      string `json:"name-en"`
+	EmployeeID  string `json:"employee-id"`
+	Gender      string `json:"gender"`
+	Nationality string `json:"nationality"`
+	Phone       string `json:"phone"`
+	InitialRole string `json:"initial-role"` // รับมาเพื่อให้ Bind JSON ผ่าน แต่จะไม่เอาไป Update
+}
+
+type UpdateRoleRequest struct {
+	ID    string `json:"id" binding:"required"`
+	Name  string `json:"name"`
+	Type  string `json:"type"` // เพิ่ม type เข้ามา
+	Color string `json:"color"`
+}
+
 func NewUserRepo(db *gorm.DB) *UserRepo {
 	return &UserRepo{db: db}
 }
 
 func (r *UserRepo) GetUserInfo(id string) (*UserInfo, error) {
-
-	fmt.Printf("--- Debug: Repository looking for ID: [%s] (Length: %d) ---\n", id, len(id))
 	var info UserInfo
+	
+	// ใช้ GORM Method API แทน Raw SQL เพื่อการ Mapping ที่แม่นยำกว่า
+	err := r.db.Table("user_info").Where("user_id = ?", id).Take(&info).Error
+	if err != nil {
+		return nil, fmt.Errorf("user not found: %w", err)
+	}
+
 	var roles []UserRole
-
-	// 1. ดึงข้อมูล User หลัก (เหมือนเดิม)
-	query := `
-        SELECT user_id, employee_id, email, fullname_thai, fullname_eng, 
-               gender, nationality, phone, role_init, picture
-        FROM user_info 
-        WHERE user_id = ?
-    `
-	result := r.db.Raw(query, id).Scan(&info)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	if result.RowsAffected == 0 {
-		return nil, fmt.Errorf("user not found: %s", id)
-	}
-
-	// 2. ดึงข้อมูล Roles (ลบ Query ที่ผิดออก แล้วใช้ตัวที่ Join ถูกต้อง)
+	// ดึง Role ID, Name, Color มาพร้อมกัน
 	roleQuery := `
-        SELECT r.role_name, r.role_color
+        SELECT r.role_id, r.role_name, r.role_color
         FROM role r
         JOIN user_roles ur ON r.role_id = ur.role_id
         WHERE ur.user_id = ?
     `
 	r.db.Raw(roleQuery, id).Scan(&roles)
 
-	// 🚩 3. Hard code เพิ่ม Role จาก RoleInit เข้าไป
-	// สร้าง Object ใหม่โดยใช้ค่าจาก info.RoleInit และใส่สีเทา (#808080)
+	// สร้าง Initial Role (Hardcode ID เป็น 000)
 	initRole := UserRole{
+		RoleID:    "000",
 		RoleName:  info.RoleInit,
 		RoleColor: "#808080",
 	}
 
-	// ยัดเข้าเข้าไปใน Slice (ในตัวอย่างนี้เอาไว้ลำดับแรกสุด)
-	roles = append([]UserRole{initRole}, roles...)
-
-	// 4. รวมร่างข้อมูล
-	info.Roles = roles
+	// เอา Initial Role ไว้หน้าสุด และตามด้วย Roles อื่นๆ
+	info.Roles = append([]UserRole{initRole}, roles...)
 
 	return &info, nil
 }
@@ -354,4 +355,213 @@ func (r *UserRepo) GetLeaveQuotas(userID string) ([]LeaveQuotaResult, error) {
     }
 
     return results, nil
+}
+
+func (r *UserRepo) UpdateUserInfo(id string, req UpdateUserRequest) error {
+	// ใช้ Map เพื่อเลือกเฉพาะฟิลด์ที่ต้องการอัปเดต (ตัด role_init, email, picture ออก)
+	result := r.db.Table("user_info").Where("user_id = ?", id).Updates(map[string]interface{}{
+		"fullname_thai": req.NameTH,
+		"fullname_eng":  req.NameEN,
+		"employee_id":   req.EmployeeID,
+		"gender":        req.Gender,
+		"nationality":   req.Nationality,
+		"phone":         req.Phone,
+		// ไม่มีการอัปเดต email, picture และ role_init
+	})
+
+	if result.Error != nil {
+		return result.Error
+	}
+    
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("user not found with id: %s", id)
+	}
+
+	return nil
+}
+func (r *UserRepo) UpdateRole(req UpdateRoleRequest) error {
+	// อัปเดตตาราง role โดยระบุ role_id
+	// GORM จะ Update เฉพาะฟิลด์ที่ระบุใน Map
+	result := r.db.Table("role").Where("role_id = ?", req.ID).Updates(map[string]interface{}{
+		"role_name":  req.Name,
+		"role_type":  req.Type, // อัปเดตประเภท (main/special)
+		"role_color": req.Color,
+	})
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	// เช็คว่ามีแถวถูกแก้จริงไหม
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("role not found with id: %s", req.ID)
+	}
+
+	return nil
+}
+
+
+type MaxLeavePart struct {
+	Sick      float64 `json:"sick"`
+	Personal  float64 `json:"personal"`
+	Vacation  float64 `json:"vacation"`
+	Maternity float64 `json:"maternity"`
+	Paternity float64 `json:"paternity"`
+	Parental  float64 `json:"parental"`
+}
+
+type UserInfoPart struct {
+	NameTH      string `json:"name-th"`
+	NameEN      string `json:"name-en"`
+	EmployeeID  string `json:"employee-id"`
+	Gender      string `json:"gender"`
+	Nationality string `json:"nationality"`
+	Phone       string `json:"phone"`
+	InitialRole string `json:"initial-role"`
+}
+
+type CreateUserFullRequest struct {
+	ID       string       `json:"id"`
+	Email    string       `json:"email"`
+	UserInfo UserInfoPart `json:"user-info"`
+	MaxLeave MaxLeavePart `json:"max-leave"`
+}
+
+type UpdateUserRolesRequest struct {
+	Roles []string `json:"roles"` // ["001", "002"]
+}
+
+// --- [NEW] Functions ---
+
+// 1. Create User (Full Transaction: Users + Info + Role + Leave Balances)
+func (r *UserRepo) CreateUserFull(req CreateUserFullRequest) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// A. Insert Users (Master)
+		if err := tx.Table("users").Create(map[string]interface{}{
+			"user_id":         req.ID,
+			"employee_id":     req.UserInfo.EmployeeID,
+			"manager_role_id": "2", // Default (เช่น ผู้ดูแล)
+		}).Error; err != nil {
+			return err
+		}
+
+		// B. Insert UserInfo
+		if err := tx.Table("user_info").Create(map[string]interface{}{
+			"user_id":       req.ID,
+			"employee_id":   req.UserInfo.EmployeeID,
+			"email":         req.Email,
+			"fullname_thai": req.UserInfo.NameTH,
+			"fullname_eng":  req.UserInfo.NameEN,
+			"gender":        req.UserInfo.Gender,
+			"nationality":   req.UserInfo.Nationality,
+			"phone":         req.UserInfo.Phone,
+			"role_init":     req.UserInfo.InitialRole,
+			"picture":       "", 
+		}).Error; err != nil {
+			return err
+		}
+
+		// C. Insert Default Role (Role ID 3 = บุคคลทั่วไป ตามข้อมูลเก่า)
+		if err := tx.Table("user_roles").Create(map[string]interface{}{
+			"user_id": req.ID,
+			"role_id": "3", 
+		}).Error; err != nil {
+			return err
+		}
+
+		// D. Insert Max Leave (Map JSON key -> DB leave_types)
+		leaveMap := map[string]float64{
+			"sick":      req.MaxLeave.Sick,
+			"personal":  req.MaxLeave.Personal,
+			"vacation":  req.MaxLeave.Vacation,
+			"maternity": req.MaxLeave.Maternity,
+			"paternity": req.MaxLeave.Paternity,
+			"parental":  req.MaxLeave.Parental,
+		}
+
+		// ใช้ปีปัจจุบันเป็นหลัก
+		currentYear := time.Now().Year() 
+
+		for nameEn, days := range leaveMap {
+			var typeID int
+			// หา ID จากตาราง leave_types โดยใช้ชื่อภาษาอังกฤษ (name_en)
+			// LOWER() เพื่อป้องกัน case sensitive (เช่น Sick vs sick)
+			if err := tx.Table("leave_types").Select("id").Where("LOWER(name_en) = LOWER(?)", nameEn).Scan(&typeID).Error; err == nil && typeID != 0 {
+				
+				// Insert ลง leave_balances
+				if err := tx.Table("leave_balances").Create(map[string]interface{}{
+					"user_id":       req.ID,
+					"leave_type_id": typeID,
+					"year":          currentYear,
+					"days_allowed":  days,
+					"days_used":     0,
+				}).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
+// 2. Update Roles (Replace Strategy: ลบของเก่า -> ใส่ของใหม่)
+func (r *UserRepo) UpdateUserRoles(userID string, roleIDs []string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// A. ลบ Role เก่าทั้งหมดของ User นี้ทิ้งก่อน
+		if err := tx.Table("user_roles").Where("user_id = ?", userID).Delete(nil).Error; err != nil {
+			return err
+		}
+
+		// B. วนลูปใส่ Role ใหม่เข้าไป
+		for _, rid := range roleIDs {
+			if err := tx.Table("user_roles").Create(map[string]interface{}{
+				"user_id": userID,
+				"role_id": rid,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *UserRepo) UpdateUserMaxLeave(userID string, req MaxLeavePart) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		leaveMap := map[string]float64{
+			"sick":      req.Sick,
+			"personal":  req.Personal,
+			"vacation":  req.Vacation,
+			"maternity": req.Maternity,
+			"paternity": req.Paternity,
+			"parental":  req.Parental,
+		}
+
+		for nameEn, days := range leaveMap {
+			var typeID int
+			// 1. หา typeID จากชื่อเหมือนเดิม
+			err := tx.Table("leave_types").Select("id").Where("LOWER(name_en) = LOWER(?)", nameEn).Scan(&typeID).Error
+			
+			if err == nil && typeID != 0 {
+				// 2. อัปเดตโดยเช็คแค่ user_id และ leave_type_id 
+				// เพื่อให้มันไปทับข้อมูลเดิม (ID 1-6) ที่ไม่มีค่า year ได้
+				result := tx.Table("leave_balances").
+					Where("user_id = ? AND leave_type_id = ?", userID, typeID).
+					Update("days_allowed", days)
+				
+				// 3. ถ้าไม่มีข้อมูลอยู่เลยจริงๆ ค่อยสร้างใหม่ (Optional)
+				// แต่ถ้าคุณอยากให้ "Update อย่างเดียว" สามารถลบ block if ด้านล่างนี้ทิ้งได้เลยครับ
+				if result.RowsAffected == 0 {
+					tx.Table("leave_balances").Create(map[string]interface{}{
+						"user_id":       userID,
+						"leave_type_id": typeID,
+						"days_allowed":  days,
+						"days_used":     0,
+						"year":          2026,
+					})
+				}
+			}
+		}
+		return nil
+	})
 }

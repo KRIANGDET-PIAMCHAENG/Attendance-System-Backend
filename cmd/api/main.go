@@ -68,7 +68,33 @@ func main() {
 		api.GET("/roles", userHdl.GetAllRoles)
 
 		api.GET("/leave/quotas/:id", userHdl.GetUserLeaveQuotas)
+
+		api.PUT("/roles/update", userHdl.UpdateRole)
 	}
+
+	system := r.Group("/system")
+    system.Use(middleware.JWTMiddleware()) // ใช้ Middleware ตรวจสอบสิทธิ์
+    {
+        userMgmt := system.Group("/user_management")
+        {
+            // 1. Create User
+            // POST /system/user_management/create
+            userMgmt.POST("/create", userHdl.CreateUserSystem)
+
+            // 2. Update Roles
+            // PUT /system/user_management/update_role/:id
+            userMgmt.PUT("/update_role/:id", userHdl.UpdateUserRoles)
+
+            // 3. Update Max Leave
+            // PUT /system/user_management/update_max_leave/:id
+            userMgmt.PUT("/update_max_leave/:id", userHdl.UpdateMaxLeave)
+            
+            // แถม: Update User Info (ถ้า Frontend ใช้ Path นี้ด้วย)
+            // userMgmt.PUT("/update/:id", userHdl.UpdateUser) 
+
+			userMgmt.PUT("/update/:id", userHdl.UpdateUser)
+        }
+    }
 	
 	/*
 		api.GET("/profile/me", func(c *gin.Context) {
