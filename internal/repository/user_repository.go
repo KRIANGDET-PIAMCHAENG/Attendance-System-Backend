@@ -462,12 +462,12 @@ func (r *UserRepo) CreateUserFull(req CreateUserFullRequest) error {
 		}
 
 		// C. Insert Default Role (Role ID 3 = บุคคลทั่วไป ตามข้อมูลเก่า)
-		if err := tx.Table("user_roles").Create(map[string]interface{}{
-			"user_id": req.ID,
-			"role_id": "3", 
-		}).Error; err != nil {
-			return err
-		}
+		// if err := tx.Table("user_roles").Create(map[string]interface{}{
+		// 	"user_id": req.ID,
+		// 	"role_id": "3", 
+		// }).Error; err != nil {
+		// 	return err
+		// }
 
 		// D. Insert Max Leave (Map JSON key -> DB leave_types)
 		leaveMap := map[string]float64{
