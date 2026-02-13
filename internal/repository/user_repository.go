@@ -358,7 +358,7 @@ func (r *UserRepo) GetLeaveQuotas(userID string) ([]LeaveQuotaResult, error) {
 }
 
 func (r *UserRepo) UpdateUserInfo(id string, req UpdateUserRequest) error {
-	// ใช้ Map เพื่อเลือกเฉพาะฟิลด์ที่ต้องการอัปเดต (ตัด role_init, email, picture ออก)
+	// ใช้ Map เพื่อเลือกเฉพาะฟิลด์ที่ต้องการอัปเดต
 	result := r.db.Table("user_info").Where("user_id = ?", id).Updates(map[string]interface{}{
 		"fullname_thai": req.NameTH,
 		"fullname_eng":  req.NameEN,
@@ -366,7 +366,11 @@ func (r *UserRepo) UpdateUserInfo(id string, req UpdateUserRequest) error {
 		"gender":        req.Gender,
 		"nationality":   req.Nationality,
 		"phone":         req.Phone,
-		// ไม่มีการอัปเดต email, picture และ role_init
+		
+		// 🚩 [NEW] ปลดล็อกบรรทัดนี้เพื่อให้ Update Role Init ได้
+		"role_init":     req.InitialRole, 
+		
+		// (ส่วน Email และ Picture เรายังคงไม่ให้แก้ผ่าน API นี้ เพื่อความปลอดภัย)
 	})
 
 	if result.Error != nil {
@@ -379,6 +383,8 @@ func (r *UserRepo) UpdateUserInfo(id string, req UpdateUserRequest) error {
 
 	return nil
 }
+
+
 func (r *UserRepo) UpdateRole(req UpdateRoleRequest) error {
 	// อัปเดตตาราง role โดยระบุ role_id
 	// GORM จะ Update เฉพาะฟิลด์ที่ระบุใน Map
@@ -562,6 +568,42 @@ func (r *UserRepo) UpdateUserMaxLeave(userID string, req MaxLeavePart) error {
 				}
 			}
 		}
+		return nil
+	})
+}
+
+// ... (code เดิม)
+
+// DeleteUser ลบข้อมูลพนักงานและข้อมูลที่เกี่ยวข้องทั้งหมด
+func (r *UserRepo) DeleteUser(userID string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1. ลบวันลาคงเหลือ (Child Table)
+		if err := tx.Table("leave_balances").Where("user_id = ?", userID).Delete(nil).Error; err != nil {
+			return err
+		}
+
+		// 2. ลบสิทธิ์การใช้งาน (Child Table)
+		if err := tx.Table("user_roles").Where("user_id = ?", userID).Delete(nil).Error; err != nil {
+			return err
+		}
+
+		// 3. ลบข้อมูลส่วนตัว (Child Table)
+		if err := tx.Table("user_info").Where("user_id = ?", userID).Delete(nil).Error; err != nil {
+			return err
+		}
+
+		// 4. ลบ User หลัก (Parent Table)
+		result := tx.Table("users").Where("user_id = ?", userID).Delete(nil)
+		
+		if result.Error != nil {
+			return result.Error
+		}
+
+		// เช็คว่ามีข้อมูลถูกลบจริงไหม (ถ้าไม่มีแสดงว่า ID ผิด)
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("user not found with id: %s", userID)
+		}
+
 		return nil
 	})
 }

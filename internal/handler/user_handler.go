@@ -265,3 +265,35 @@ func (h *UserHandler) UpdateMaxLeave(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "success"})
 }
 
+// backend/internal/handler/user_handler.go
+
+func (h *UserHandler) DeleteUser(c *gin.Context) {
+	// สร้าง Struct สำหรับรับ JSON { "id": "..." }
+	var req struct {
+		ID string `json:"id" binding:"required"`
+	}
+
+	// Bind JSON จาก Body
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{
+			"error":   "Invalid JSON format or missing 'id'",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// เรียก Repo เพื่อลบ โดยใช้ req.ID ที่แกะได้
+	if err := h.repo.DeleteUser(req.ID); err != nil {
+		c.JSON(500, gin.H{
+			"error":   "Failed to delete user",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"status":  "success",
+		"message": "User deleted successfully",
+	})
+}
+

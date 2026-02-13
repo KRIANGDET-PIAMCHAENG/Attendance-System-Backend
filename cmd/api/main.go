@@ -93,6 +93,8 @@ func main() {
             // userMgmt.PUT("/update/:id", userHdl.UpdateUser) 
 
 			userMgmt.PUT("/update/:id", userHdl.UpdateUser)
+
+			userMgmt.DELETE("/delete", userHdl.DeleteUser)
         }
     }
 	
