@@ -297,3 +297,100 @@ func (h *UserHandler) DeleteUser(c *gin.Context) {
 	})
 }
 
+func (h *UserHandler) GetRolesWithSubordinatesHandler(c *gin.Context) {
+	// เรียก Repo
+	data, err := h.repo.GetRolesWithSubordinates()
+	if err != nil {
+		c.JSON(500, gin.H{
+			"error":   "Failed to fetch roles and subordinates",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// ส่งกลับเป็น JSON ตาม format ที่ Frontend ขอมาเป๊ะๆ
+	// { "roles": [ ... ] }
+	c.JSON(200, gin.H{
+		"roles": data,
+	})
+}
+
+// GetNonSubordinatesHandler ส่งรายชื่อพนักงานที่ยังไม่ได้เป็นลูกน้องของ Role นั้นกลับไป
+func (h *UserHandler) GetNonSubordinatesHandler(c *gin.Context) {
+	roleID := c.Param("id") // รับ {role-id} จาก URL
+
+	data, err := h.repo.GetNonSubordinatesByRole(roleID)
+	if err != nil {
+		c.JSON(500, gin.H{
+			"error":   "Failed to fetch potential members",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// ส่งกลับตาม Format ที่เพื่อนขอเป๊ะๆ
+	c.JSON(200, gin.H{
+		"members": data,
+	})
+}
+
+// UpdateRoleWithMembersHandler รับ Request มาอัปเดต Role
+func (h *UserHandler) UpdateRoleWithMembersHandler(c *gin.Context) {
+	var req repository.UpdateRoleFullRequest
+
+	// 1. Bind JSON เข้า Struct
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid request body", "details": err.Error()})
+		return
+	}
+
+	// 2. (Optional) รับ ID จาก URL มาทับใน Body เพื่อความชัวร์
+	idFromURL := c.Param("id")
+	if idFromURL != "" {
+		req.ID = idFromURL
+	}
+
+	// 3. เรียก Repository
+	err := h.repo.UpdateRoleWithMembers(req)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to update role", "details": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "Role updated successfully"})
+}
+
+
+// DeleteRoleRequest struct สำหรับรับค่า ID จาก Body
+type DeleteRoleRequest struct {
+	ID string `json:"id" binding:"required"`
+}
+
+// DeleteRoleHandler รับ Request ลบ Role
+func (h *UserHandler) DeleteRoleHandler(c *gin.Context) {
+	var req DeleteRoleRequest
+
+	// รับค่า ID จาก Body (เพราะ Frontend ส่งมาเป็น data: {'id': ...})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{
+			"error":   "Invalid request body",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// เรียก Repo เพื่อทำการลบ
+	err := h.repo.DeleteRole(req.ID)
+	if err != nil {
+		c.JSON(500, gin.H{
+			"error":   "Failed to delete role",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"message": "Role and its relationships deleted successfully",
+		"deleted_id": req.ID,
+	})
+}

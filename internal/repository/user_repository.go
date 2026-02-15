@@ -103,6 +103,47 @@ type UpdateRoleRequest struct {
 	Color string `json:"color"`
 }
 
+type MemberResponse struct {
+	ID        string `json:"id"`
+	ThName    string `json:"thName"`
+	EnName    string `json:"enName"`
+	AvatarURL string `json:"avatarUrl"`
+}
+
+// RoleWithMembersResponse โครงสร้างข้อมูล Role พร้อมลูกน้อง
+type RoleWithMembersResponse struct {
+	ID        string           `json:"id"`
+	RoleName  string           `json:"roleName"`
+	RoleColor string           `json:"roleColor"`
+	Type      string           `json:"type"`
+	Members   []MemberResponse `json:"members"`
+}
+
+// Role เป็น Struct ที่ map กับตาราง "role" ใน Database
+type Role struct {
+	RoleID    string `gorm:"primaryKey;column:role_id"`
+	RoleName  string `gorm:"column:role_name"`
+	RoleColor string `gorm:"column:role_color"`
+	RoleType  string `gorm:"column:role_type"`
+}
+
+type MemberIDReq struct {
+	ID string `json:"id"`
+}
+
+type UpdateRoleFullRequest struct {
+	ID      string        `json:"id"`
+	Name    string        `json:"name"`
+	Type    string        `json:"type"`
+	Color   string        `json:"color"`
+	Members []MemberIDReq `json:"members"` // รับเป็น Array Object: [{"id": "..."}]
+}
+
+// TableName ระบุชื่อตารางให้ชัดเจนว่าเป็น "role" (ไม่ใช่ roles)
+func (Role) TableName() string {
+	return "role"
+}
+
 func NewUserRepo(db *gorm.DB) *UserRepo {
 	return &UserRepo{db: db}
 }
@@ -446,7 +487,6 @@ func (r *UserRepo) CreateUserFull(req CreateUserFullRequest) error {
 		if err := tx.Table("users").Create(map[string]interface{}{
 			"user_id":         req.ID,
 			"employee_id":     req.UserInfo.EmployeeID,
-			"manager_role_id": "2", // Default (เช่น ผู้ดูแล)
 		}).Error; err != nil {
 			return err
 		}
@@ -605,5 +645,168 @@ func (r *UserRepo) DeleteUser(userID string) error {
 		}
 
 		return nil
+	})
+}
+
+// GetRolesWithSubordinates ดึง Role ทั้งหมดพร้อมรายชื่อลูกน้อง
+func (r *UserRepo) GetRolesWithSubordinates() ([]RoleWithMembersResponse, error) {
+	// 1. ดึง Role ทั้งหมดมาก่อน
+	var roles []Role
+	if err := r.db.Order("role_id").Find(&roles).Error; err != nil {
+		return nil, err
+	}
+
+	var response []RoleWithMembersResponse
+
+	// 2. วนลูปแต่ละ Role
+	for _, role := range roles {
+		var subordinates []UserInfo
+
+		// Join หาคนที่มี manager_role_id ตรงกับ Role นี้
+		err := r.db.Table("user_info").
+			Select("user_info.*").
+			Joins("JOIN subordinate_manager_roles smr ON user_info.user_id = smr.subordinate_id").
+			Where("smr.manager_role_id = ?", role.RoleID).
+			Find(&subordinates).Error
+
+		if err != nil {
+			return nil, err
+		}
+
+		// 3. แปลงข้อมูลลูกน้อง (UserInfo) เป็น MemberResponse
+		var members []MemberResponse = []MemberResponse{} 
+		
+		for _, sub := range subordinates {
+			members = append(members, MemberResponse{
+				ID:        sub.UserID,
+				
+				// 🚩 แก้ตรงนี้: เปลี่ยน n เล็ก เป็น N ใหญ่ ให้ตรงกับ Struct
+				ThName:    sub.FullNameThai, 
+				EnName:    sub.FullNameEng,
+				
+				AvatarURL: sub.Picture,
+			})
+		}
+
+		// 4. เพิ่มเข้า Response
+		response = append(response, RoleWithMembersResponse{
+			ID:        role.RoleID,
+			RoleName:  role.RoleName,
+			RoleColor: role.RoleColor,
+			Type:      role.RoleType,
+			Members:   members,
+		})
+	}
+
+	return response, nil
+}
+
+// GetNonSubordinatesByRole ดึงรายชื่อพนักงานทั้งหมดที่ "ไม่ได้" เป็นลูกน้องของ Role ID ที่ระบุ
+func (r *UserRepo) GetNonSubordinatesByRole(roleID string) ([]MemberResponse, error) {
+	var members []MemberResponse
+
+	// Query: เลือกคนจาก user_info ที่ user_id ไม่อยู่ในรายชื่อลูกน้องของ roleID นี้
+	query := `
+		SELECT 
+			user_id as id, 
+			fullname_thai as th_name, 
+			fullname_eng as en_name, 
+			picture as avatar_url
+		FROM user_info
+		WHERE user_id NOT IN (
+			SELECT subordinate_id 
+			FROM subordinate_manager_roles 
+			WHERE manager_role_id = ?
+		)
+		ORDER BY fullname_thai ASC
+	`
+
+	err := r.db.Raw(query, roleID).Scan(&members).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// ป้องกันค่า null ใน JSON ถ้าไม่มีข้อมูลให้ส่ง Array ว่างกลับไป
+	if members == nil {
+		members = []MemberResponse{}
+	}
+
+	return members, nil
+}
+
+// UpdateRoleWithMembers อัปเดต Role + จัดการสมาชิก (รองรับ Logic: Main Role มีได้แค่ 1)
+func (r *UserRepo) UpdateRoleWithMembers(req UpdateRoleFullRequest) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1. อัปเดตข้อมูลพื้นฐานของ Role (ชื่อ, สี, ประเภท)
+		if err := tx.Table("role").Where("role_id = ?", req.ID).Updates(map[string]interface{}{
+			"role_name":  req.Name,
+			"role_type":  req.Type,
+			"role_color": req.Color,
+		}).Error; err != nil {
+			return err
+		}
+
+		// 2. ล้างลูกน้องเก่าของ Role นี้ออกให้หมดก่อน (Reset Roster)
+		// เพื่อเตรียมใส่รายชื่อชุดใหม่
+		if err := tx.Table("subordinate_manager_roles").
+			Where("manager_role_id = ?", req.ID).
+			Delete(nil).Error; err != nil {
+			return err
+		}
+
+		// 3. วนลูปใส่ลูกน้องใหม่
+		if len(req.Members) > 0 {
+			for _, member := range req.Members {
+
+				// 🚩 [NEW LOGIC] เช็คว่า Role ที่กำลังจะใส่นี้เป็น "main" หรือไม่?
+				if req.Type == "main" {
+					// ถ้าเป็น Main -> ลูกน้องคนนี้ห้ามมี Main Role อื่นอีก
+					// ต้องสั่งลบความสัมพันธ์อื่น ที่เป็น Type 'main' ของลูกน้องคนนี้ทิ้งให้หมด
+					
+					subQuery := tx.Table("role").Select("role_id").Where("role_type = ?", "main")
+					
+					if err := tx.Table("subordinate_manager_roles").
+						Where("subordinate_id = ?", member.ID).
+						Where("manager_role_id IN (?)", subQuery). // ลบเฉพาะที่เป็น Main
+						Delete(nil).Error; err != nil {
+						return err
+					}
+				}
+
+				// 4. บันทึก User คนนี้ว่าเป็นลูกน้องของ Role นี้ (Insert ปกติ)
+				newRelation := map[string]interface{}{
+					"subordinate_id":  member.ID,
+					"manager_role_id": req.ID,
+				}
+				
+				if err := tx.Table("subordinate_manager_roles").Create(newRelation).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
+// DeleteRole ลบ Role และเคลียร์ความสัมพันธ์ลูกน้องทั้งหมด (Transaction)
+func (r *UserRepo) DeleteRole(roleID string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1. ลบความสัมพันธ์ในตาราง subordinate_manager_roles ก่อน
+		// (ถ้าไม่ลบก่อน จะติด Foreign Key หรือข้อมูลขยะค้าง)
+		if err := tx.Table("subordinate_manager_roles").
+			Where("manager_role_id = ?", roleID).
+			Delete(nil).Error; err != nil {
+			return err
+		}
+
+		// 2. ลบตัว Role จริงๆ ในตาราง role
+		if err := tx.Table("role").
+			Where("role_id = ?", roleID).
+			Delete(nil).Error; err != nil {
+			return err
+		}
+
+		return nil // Commit Transaction
 	})
 }

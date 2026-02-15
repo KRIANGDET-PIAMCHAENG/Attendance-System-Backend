@@ -96,7 +96,20 @@ func main() {
 
 			userMgmt.DELETE("/delete", userHdl.DeleteUser)
         }
+
+		roleMgmt := system.Group("/role_management")
+		{
+			roleMgmt.GET("/role", userHdl.GetRolesWithSubordinatesHandler)
+
+			roleMgmt.GET("/all-user/:id", userHdl.GetNonSubordinatesHandler)
+
+			roleMgmt.PUT("/update/:id", userHdl.UpdateRoleWithMembersHandler)
+
+			roleMgmt.DELETE("/delete", userHdl.DeleteRoleHandler)
+		}
     }
+
+
 	
 	/*
 		api.GET("/profile/me", func(c *gin.Context) {
