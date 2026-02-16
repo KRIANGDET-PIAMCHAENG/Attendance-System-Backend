@@ -550,26 +550,27 @@ func (r *UserRepo) CreateUserFull(req CreateUserFullRequest) error {
 		return nil
 	})
 }
-
-// 2. Update Roles (Replace Strategy: ลบของเก่า -> ใส่ของใหม่)
+// 🚩 เปลี่ยน []int เป็น []string
 func (r *UserRepo) UpdateUserRoles(userID string, roleIDs []string) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		// A. ลบ Role เก่าทั้งหมดของ User นี้ทิ้งก่อน
-		if err := tx.Table("user_roles").Where("user_id = ?", userID).Delete(nil).Error; err != nil {
-			return err
-		}
+    return r.db.Transaction(func(tx *gorm.DB) error {
+        // 1. ลบของเดิม
+        if err := tx.Table("user_roles").Where("user_id = ?", userID).Delete(nil).Error; err != nil {
+            return err
+        }
 
-		// B. วนลูปใส่ Role ใหม่เข้าไป
-		for _, rid := range roleIDs {
-			if err := tx.Table("user_roles").Create(map[string]interface{}{
-				"user_id": userID,
-				"role_id": rid,
-			}).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+        // 2. ใส่ของใหม่
+        for _, roleID := range roleIDs {
+            data := map[string]interface{}{
+                "user_id":    userID,
+                "role_id":    roleID, // ส่งเป็น string ไปเลย DB จะรับได้พอดี
+                "created_at": time.Now(),
+            }
+            if err := tx.Table("user_roles").Create(data).Error; err != nil {
+                return err
+            }
+        }
+        return nil
+    })
 }
 
 func (r *UserRepo) UpdateUserMaxLeave(userID string, req MaxLeavePart) error {

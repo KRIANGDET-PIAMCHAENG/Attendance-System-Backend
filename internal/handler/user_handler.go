@@ -231,23 +231,23 @@ func (h *UserHandler) CreateUserSystem(c *gin.Context) {
 }
 
 func (h *UserHandler) UpdateUserRoles(c *gin.Context) {
-	id := c.Param("id")
-	
-	// 🚩 แก้ตรงนี้: เรียกใช้ UpdateUserRolesRequest (เติม s ตรง Role และ User นำหน้า)
-	var req repository.UpdateUserRolesRequest 
-	
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "Invalid JSON", "details": err.Error()})
-		return
-	}
+    id := c.Param("id")
+    var req struct {
+        Roles []string `json:"roles"`
+    }
 
-	if err := h.repo.UpdateUserRoles(id, req.Roles); err != nil {
-		c.JSON(500, gin.H{"error": "Failed to update roles", "details": err.Error()})
-		return
-	}
-	c.JSON(200, gin.H{"status": "success"})
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(400, gin.H{"error": "Invalid JSON", "details": err.Error()})
+        return
+    }
+
+    // 🚩 ส่ง req.Roles (ที่เป็น []string) ไปเลย
+    if err := h.repo.UpdateUserRoles(id, req.Roles); err != nil {
+        c.JSON(500, gin.H{"error": "Failed to update roles", "details": err.Error()})
+        return
+    }
+    c.JSON(200, gin.H{"status": "success"})
 }
-
 // 3. Handler Update Max Leave
 func (h *UserHandler) UpdateMaxLeave(c *gin.Context) {
 	id := c.Param("id") // รับ ID จาก URL
