@@ -37,6 +37,9 @@ func main() {
 	userRepo := repository.NewUserRepo(db)
 	userHdl := handler.NewUserHandler(userRepo)
 
+	configRepo := repository.NewConfigRepo(db)
+	configHdl := handler.NewConfigHandler(configRepo)
+
 	// 3. Initialize Router
 	r := gin.Default()
 
@@ -120,6 +123,13 @@ func main() {
 			roleMgmt.PUT("/update/:id", userHdl.UpdateRoleWithMembersHandler)
 
 			roleMgmt.DELETE("/delete", userHdl.DeleteRoleHandler)
+		}
+
+		configGroup := system.Group("/config")
+		{
+			// Budget Year
+			configGroup.GET("/budget_year/get", configHdl.GetBudgetYear)
+			configGroup.PUT("/budget_year/update", configHdl.UpdateBudgetYear)
 		}
 	}
 
