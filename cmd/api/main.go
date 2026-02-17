@@ -77,6 +77,12 @@ func main() {
 	{
 		api.GET("/init", userHdl.InitInfo)
 
+		attendance := api.Group("/attendance")
+        {
+            // POST /api/attendance/record
+            attendance.POST("/record", userHdl.RecordAttendanceHandler)
+        }
+
 	}
 
 	system := r.Group("/system")

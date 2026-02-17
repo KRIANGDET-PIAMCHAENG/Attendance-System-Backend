@@ -6,6 +6,7 @@ import(
 	"my-app/internal/repository" 
 	"github.com/gin-gonic/gin"
 	"my-app/pkg/utils"
+	"fmt"
 )
 
 type UserHandler struct {
@@ -421,6 +422,7 @@ func (h *UserHandler) CreateRoleHandler(c *gin.Context) {
 
 	// 2. เรียก Repository
 	if err := h.repo.CreateRole(req); err != nil {
+		fmt.Println("Bind Error:", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create role: " + err.Error()})
 		return
 	}
@@ -441,4 +443,23 @@ func (h *UserHandler) GetAllMembersHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"members": members,
 	})
+}
+
+func (h *UserHandler) RecordAttendanceHandler(c *gin.Context) {
+	var req repository.RecordAttendanceRequest
+
+	// Bind JSON ตัวใหม่
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid Data", "details": err.Error()})
+		return
+	}
+
+	userID := c.MustGet("user_id").(string)
+
+	if err := h.repo.RecordAttendance(userID, req); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to record", "details": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "Success", "timestamp": req.Timestamp})
 }
