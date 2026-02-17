@@ -157,4 +157,29 @@ type UpdateUserRolesRequest struct {
 	Roles []string `json:"roles"` // ["001", "002"]
 }
 
-// --- [NEW] Functions ---
+// CreateRoleRequest รับข้อมูลสร้าง Role จาก Frontend
+type CreateRoleRequest struct {
+	ID      string       `json:"id" binding:"required"`
+	Type    string       `json:"type" binding:"required"`
+	Color   string       `json:"color" binding:"required"`
+	Name    string       `json:"name" binding:"required"`
+	Members []MemberItem `json:"members"` // รับ Array ของ User ID
+}
+
+// MemberItem โครงสร้างย่อยสำหรับสมาชิกใน Role
+type MemberItem struct {
+	ID string `json:"id"`
+}
+
+// ... (ต่อท้ายไฟล์ user.go)
+
+type SubordinateManagerRole struct {
+	SubordinateID string    `gorm:"primaryKey;column:subordinate_id;type:varchar(50)"`
+	ManagerRoleID string    `gorm:"primaryKey;column:manager_role_id;type:varchar(50)"`
+    // CreatedAt     time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP"` // ถ้า DB มี field นี้ก็ใส่
+}
+
+// กำหนดชื่อตารางให้ตรงกับ DB
+func (SubordinateManagerRole) TableName() string {
+	return "subordinate_manager_roles"
+}

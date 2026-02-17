@@ -2,6 +2,7 @@ package handler
 
 import(
     "log"
+	"net/http"
 	"my-app/internal/repository" 
 	"github.com/gin-gonic/gin"
 	"my-app/pkg/utils"
@@ -406,4 +407,23 @@ func (h *UserHandler) DeleteRoleHandler(c *gin.Context) {
 		"message": "Role and its relationships deleted successfully",
 		"deleted_id": req.ID,
 	})
+}
+
+// CreateRoleHandler: POST /system/role/create
+func (h *UserHandler) CreateRoleHandler(c *gin.Context) {
+	var req repository.CreateRoleRequest
+
+	// 1. รับ JSON
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 2. เรียก Repository
+	if err := h.repo.CreateRole(req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create role: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Role created successfully", "id": req.ID})
 }

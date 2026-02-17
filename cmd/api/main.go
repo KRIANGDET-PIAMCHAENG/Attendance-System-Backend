@@ -123,6 +123,8 @@ func main() {
 			roleMgmt.PUT("/update/:id", userHdl.UpdateRoleWithMembersHandler)
 
 			roleMgmt.DELETE("/delete", userHdl.DeleteRoleHandler)
+
+			roleMgmt.POST("/create", userHdl.CreateRoleHandler)
 		}
 
 		configGroup := system.Group("/config")

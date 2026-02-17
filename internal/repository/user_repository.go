@@ -688,3 +688,43 @@ func (r *UserRepo) GetUserRoles(userID string) ([]string, error) {
 
 	return roles, nil
 }
+
+
+// CreateRole สร้าง Role ใหม่และเพิ่มสมาชิก
+func (r *UserRepo) CreateRole(req CreateRoleRequest) error {
+	// เริ่ม Transaction
+	tx := r.db.Begin()
+
+	// 1. สร้าง Role
+	role := Role{
+		RoleID:    req.ID,
+		RoleName:  req.Name,
+		RoleColor: req.Color,
+		RoleType:  req.Type,
+	}
+
+	if err := tx.Create(&role).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// 2. เพิ่มสมาชิก (ถ้ามี)
+	// สมมติว่า members คือ "ลูกน้องในสังกัด" (subordinate_manager_roles) 
+	// หรือถ้าหมายถึง "คนที่เป็น Role นี้" ให้เปลี่ยนไปใช้ตาราง user_roles แทนนะครับ
+	if len(req.Members) > 0 {
+		for _, member := range req.Members {
+			// กรณี: เพิ่มลูกน้องในสังกัด (Subordinates)
+			subordinate := SubordinateManagerRole{
+				SubordinateID: member.ID,
+				ManagerRoleID: req.ID,
+			}
+			if err := tx.Create(&subordinate).Error; err != nil {
+				tx.Rollback()
+				return err
+			}
+		}
+	}
+
+	// Commit Transaction
+	return tx.Commit().Error
+}
