@@ -3,35 +3,31 @@ package middleware
 import (
 	"net/http"
 	"strings"
-	"my-app/pkg/utils" // ตรวจสอบ path ให้ตรงกับโปรเจกต์คุณ
+	"my-app/pkg/utils" 
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 var IsTestMode = false
 
 func JWTMiddleware() gin.HandlerFunc {
-
-
 	return func(c *gin.Context) {
 
 		if IsTestMode {
-			// ยัดข้อมูลของคุณ Kriangdet เข้าไปใน Context เลยไม่ต้องเช็ก Token
 			c.Set("user_id", "1250101587399")
+			// 🚩 ใส่ Role จำลองให้ด้วย ไม่งั้น Test Mode จะเข้าหน้า Admin ไม่ได้
+			c.Set("user_roles", []string{"admin"}) 
 			c.Next()
 			return
 		}
 
-		// 1. ดึง Header "Authorization" ออกมา
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
-			c.Abort() // สั่งหยุด ไม่ให้ไปต่อที่ Handler
+			c.Abort() 
 			return
 		}
 
-		// 2. แยกคำว่า "Bearer <token>"
 		parts := strings.SplitN(authHeader, " ", 2)
 		if !(len(parts) == 2 && parts[0] == "Bearer") {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header format must be Bearer {token}"})
@@ -41,27 +37,18 @@ func JWTMiddleware() gin.HandlerFunc {
 
 		tokenString := parts[1]
 
-		// 3. ตรวจสอบ Token (Parse และ Verify Signature)
-		token, err := jwt.ParseWithClaims(tokenString, &utils.MyCustomClaims{}, func(token *jwt.Token) (interface{}, error) {
-            if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-                return nil, jwt.ErrSignatureInvalid
-            }
-            return []byte("R1clvDeLZgp5knHvm0WLkBvqMD51khuRBzw1BTjXjH8="), nil
-        })
+		// 🚩 เรียกใช้ ValidateToken จาก utils แทนการ Parse เอง (ลดความผิดพลาดเรื่อง Key)
+		claims, err := utils.ValidateToken(tokenString)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+			c.Abort()
+			return
+		}
 
-        if err != nil || !token.Valid {
-            c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
-            c.Abort()
-            return
-        }
+		// 🚩 ฝากข้อมูลลง Context ด้วย Key ที่ถูกต้อง ("user_roles" มี s)
+		c.Set("user_id", claims.UserID)
+		c.Set("user_roles", claims.Roles) // ใช้ Roles (Array)
 
-        // 🚩 4. ดึงข้อมูลจาก Payload (Claims) ออกมาฝากไว้ใน Context
-        if claims, ok := token.Claims.(*utils.MyCustomClaims); ok && token.Valid {
-            // ฝากทั้ง ID และ Role ไว้ใน Context
-            c.Set("user_id", claims.UserID)
-            c.Set("user_role", claims.Role)
-        }
-
-        c.Next()
+		c.Next()
 	}
 }

@@ -15,57 +15,70 @@ func NewUserHandler(repo *repository.UserRepo) *UserHandler {
 	return &UserHandler{repo: repo}
 }
 
-
 func (h *UserHandler) LoginWithGoogle(c *gin.Context) {
-    var input struct { Token string `json:"token" binding:"required"` }
-    if err := c.ShouldBindJSON(&input); err != nil {
-        c.JSON(400, gin.H{"error": "Invalid JSON format"})
-        return
-    }
+	// รับ Token จาก Frontend
+	var input struct {
+		Token string `json:"token" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(400, gin.H{"error": "Invalid JSON format"})
+		return
+	}
 
-    // 1. Verify Google Token (เหมือนเดิม)
-    googleUser, err := utils.VerifyGoogleAccessToken(input.Token) 
-    if err != nil {
-        c.JSON(401, gin.H{"error": "Invalid Google Access Token"})
-        return
-    }
+	// 1. Verify Google Token
+	googleUser, err := utils.VerifyGoogleAccessToken(input.Token)
+	if err != nil {
+		c.JSON(401, gin.H{"error": "Invalid Google Access Token", "details": err.Error()})
+		return
+	}
 
-    // 🚩 2. เปลี่ยนจุดนี้: จาก GetRoleByEmail เป็น GetUserInfoByEmail
-    // เราจะได้รับตัวแปร userInfo ซึ่งเป็นก้อน Struct (ID, Name, Email, Role) มาแทน
-    userInfo, err := h.repo.GetUserInfoByEmail(googleUser.Email)
-    if err != nil {
-        // ถ้าหาไม่เจอ แปลว่าอีเมลนี้ไม่ได้ลงทะเบียนไว้ในระบบเรา
-        c.JSON(401, gin.H{"error": "User not registered in our system"})
-        return
-    }
+	// 2. ดึงข้อมูล User จาก Database ด้วย Email
+	// (ใช้ฟังก์ชัน GetUserInfoByEmail ที่มีอยู่แล้วใน Repo)
+	userInfo, err := h.repo.GetUserInfoByEmail(googleUser.Email)
+	if err != nil {
+		// ถ้า Error แปลว่าหาไม่เจอ หรือ DB มีปัญหา
+		c.JSON(401, gin.H{"error": "User not registered in our system"})
+		return
+	}
 
-    // userRole, err := h.repo.AllRole(userInfo.UserID)
-    // if err != nil {
-    //     // ถ้าหาไม่เจอ แปลว่าอีเมลนี้ไม่ได้ลงทะเบียนไว้ในระบบเรา
-    //     c.JSON(401, gin.H{"error": "User not registered in our system"})
-    //     return
-    // }
+	// 3. ดึง Role ทั้งหมดของ User คนนี้ (สำคัญมาก! เพื่อเอาไปใส่ใน JWT)
+	// สมมติว่าใน Repo มีฟังก์ชัน GetUserRoles(userID) ที่คืนค่า []string
+	// *หมายเหตุ: ถ้ายังไม่มีฟังก์ชันนี้ใน Repo ให้ไปเพิ่มก่อนนะครับ (ดูโค้ดตัวอย่างด้านล่าง)
+	roles, err := h.repo.GetUserRoles(userInfo.UserID) 
+	if err != nil {
+		// กรณีดึง Role ไม่ได้ ให้ถือว่า User ไม่มี Role หรือ Log error ไว้
+		// แต่เพื่อให้ Login ผ่านได้ อาจจะให้ roles เป็น empty slice ไปก่อน
+		log.Printf("Failed to get user roles: %v", err)
+		roles = []string{} 
+	}
 
-    err_update := h.repo.UpdatePicture(googleUser.Email, googleUser.Picture)
-    if err_update != nil {
-        log.Printf("Failed to update picture: %v", err)
-        // ไม่ต้อง return error ก็ได้เพื่อให้ User ยัง Login ต่อได้แม้รูปจะอัปเดตไม่สำเร็จ
-    }
+	// 4. Update รูปโปรไฟล์ (ถ้ามี)
+	if err := h.repo.UpdatePicture(googleUser.Email, googleUser.Picture); err != nil {
+		log.Printf("Failed to update picture: %v", err)
+		// ไม่ return error เพื่อให้ Login ต่อได้
+	}
 
-    // 🚩 3. แก้จุดนี้: ส่ง userInfo.Role เข้าไปสร้าง JWT
-    myToken, err := utils.GenerateToken(userInfo.RoleGen,userInfo.UserID)
+	// 5. Generate JWT Token
+	// 🚩 ส่ง roles (ที่เป็น []string) เข้าไปแทน string ตัวเดียว
+	myToken, err := utils.GenerateToken(userInfo.Role, userInfo.UserID)
     if err != nil {
         c.JSON(500, gin.H{"error": "Internal server error: token generation failed"})
         return
     }
 
-    // 🚩 4. แก้จุดส่งกลับ: แนบ userInfo ไปทั้งก้อนเลย
-    c.JSON(200, gin.H{
-        "access_token": myToken,
-        "user":         userInfo,   
-        //"role":         userRole,
-        // "picture":      googleUser.Picture,
-    })
+	// 6. ส่ง Response กลับไปให้ Frontend
+	// เราอัปเดต picture ใน DB แล้ว ดังนั้นค่าใน userInfo.Picture (ถ้า Get มาใหม่) ก็น่าจะอัปเดตแล้ว
+	// หรือจะส่ง googleUser.Picture กลับไปให้เลยก็ได้เพื่อความสดใหม่
+	c.JSON(200, gin.H{
+		"access_token": myToken,
+		"user": gin.H{
+			"user_id": userInfo.UserID,
+			"name":    userInfo.Name,
+			"email":   userInfo.Email,
+			"roles":   roles,              // ส่ง Role ทั้งหมดกลับไปด้วย
+			"picture": googleUser.Picture, // ใช้รูปจาก Google ล่าสุด
+		},
+	})
 }
 
 
