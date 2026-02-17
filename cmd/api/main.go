@@ -130,6 +130,9 @@ func main() {
 			// Budget Year
 			configGroup.GET("/budget_year/get", configHdl.GetBudgetYear)
 			configGroup.PUT("/budget_year/update", configHdl.UpdateBudgetYear)
+
+			configGroup.GET("/attendance_time/get", configHdl.GetAttendanceTime)
+            configGroup.PUT("/attendance_time/update", configHdl.UpdateAttendanceTime)
 		}
 	}
 

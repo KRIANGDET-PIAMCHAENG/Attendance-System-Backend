@@ -44,3 +44,19 @@ type ConfigBudgetYear struct {
 	Day   int `json:"day" binding:"required"`
 	Month int `json:"month" binding:"required"`
 }
+
+// TimePair เก็บเวลา (ชั่วโมง:นาที)
+type TimePair struct {
+	Hour   int `json:"hour" binding:"min=0,max=23"`   // บังคับ 0-23
+	Minute int `json:"minute" binding:"min=0,max=59"` // บังคับ 0-59
+}
+
+// ConfigAttendanceTime โครงสร้างข้อมูลตั้งค่าเวลาเข้างาน
+type ConfigAttendanceTime struct {
+	AutoCheckout      bool     `json:"auto-checkout"`
+	CutoffTime        TimePair `json:"cutoff-time" binding:"required"`
+	CheckInTime       TimePair `json:"check-in-time" binding:"required"`
+	CheckOutTime      TimePair `json:"check-out-time" binding:"required"`
+	CheckInLeaveTime  TimePair `json:"check-in-leave-time" binding:"required"`
+	CheckOutLeaveTime TimePair `json:"check-out-leave-time" binding:"required"`
+}
