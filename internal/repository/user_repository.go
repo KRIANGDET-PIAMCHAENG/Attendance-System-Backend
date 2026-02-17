@@ -728,3 +728,15 @@ func (r *UserRepo) CreateRole(req CreateRoleRequest) error {
 	// Commit Transaction
 	return tx.Commit().Error
 }
+// GetAllMembers ดึงรายชื่อพนักงานทั้งหมด (เฉพาะชื่อและรูป)
+func (r *UserRepo) GetAllMembers() ([]MemberLite, error) {
+	var members []MemberLite
+	
+	// Query เฉพาะ Column ที่จำเป็นจาก user_info
+	// GORM จะ Map Column เข้า Struct ให้อัตโนมัติตาม Tag gorm:"column:..."
+	err := r.db.Table("user_info").
+		Select("user_id, fullname_thai, fullname_eng, picture").
+		Scan(&members).Error
+
+	return members, err
+}

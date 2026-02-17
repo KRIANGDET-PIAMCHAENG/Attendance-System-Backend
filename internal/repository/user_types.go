@@ -183,3 +183,11 @@ type SubordinateManagerRole struct {
 func (SubordinateManagerRole) TableName() string {
 	return "subordinate_manager_roles"
 }
+
+// MemberLite โครงสร้างข้อมูลสำหรับแสดงรายชื่อพนักงานแบบย่อ
+type MemberLite struct {
+	ID        string `json:"id" gorm:"column:user_id"`
+	ThName    string `json:"thName" gorm:"column:fullname_thai"`
+	EnName    string `json:"enName" gorm:"column:fullname_eng"`
+	AvatarUrl string `json:"avatarUrl" gorm:"column:picture"`
+}

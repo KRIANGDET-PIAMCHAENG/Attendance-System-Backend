@@ -427,3 +427,18 @@ func (h *UserHandler) CreateRoleHandler(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Role created successfully", "id": req.ID})
 }
+
+
+// GetAllMembersHandler: GET /system/user_management/members
+func (h *UserHandler) GetAllMembersHandler(c *gin.Context) {
+	members, err := h.repo.GetAllMembers()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch members"})
+		return
+	}
+
+	// ส่งกลับในรูปแบบ { "members": [...] } ตามที่ขอ
+	c.JSON(http.StatusOK, gin.H{
+		"members": members,
+	})
+}

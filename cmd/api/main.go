@@ -125,6 +125,8 @@ func main() {
 			roleMgmt.DELETE("/delete", userHdl.DeleteRoleHandler)
 
 			roleMgmt.POST("/create", userHdl.CreateRoleHandler)
+
+			userMgmt.GET("/members", userHdl.GetAllMembersHandler)
 		}
 
 		configGroup := system.Group("/config")
