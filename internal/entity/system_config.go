@@ -60,3 +60,28 @@ type ConfigAttendanceTime struct {
 	CheckInLeaveTime  TimePair `json:"check-in-leave-time" binding:"required"`
 	CheckOutLeaveTime TimePair `json:"check-out-leave-time" binding:"required"`
 }
+
+type ConfigAttendanceRequest struct {
+	RequestNeedSignature  bool `json:"request-need-signature"`
+	ApproveNeedSignature  bool `json:"approve-need-signature"`
+	SpecifyApprovalReason bool `json:"specify-approval-reason"`
+	SpecifyRemark         bool `json:"specify-remark"`
+	RequiredRemark        bool `json:"required-remark"`
+	EvidenceFile          bool `json:"evidence-file"`
+	RequiredEvidenceFile  bool `json:"required-evidence-file"`
+}
+
+// LeaveSettings รายละเอียดการตั้งค่าของแต่ละประเภทการลา
+type LeaveSettings struct {
+	RequestNeedSignature bool `json:"request-need-signature"`
+	ApproveNeedSignature bool `json:"approve-need-signature"`
+	AllowRetroactive     bool `json:"allow-retroactive"`
+	SpecifyRemark        bool `json:"specify-remark"`
+	RequiredRemark       bool `json:"required-remark"`
+	EvidenceFile         bool `json:"evidence-file"`
+	RequiredEvidenceFile bool `json:"required-evidence-file"`
+}
+
+// ConfigLeave คือ Map ที่เก็บ LeaveSettings แยกตามชื่อประเภทการลา
+// เช่น data["sick"] = LeaveSettings{...}
+type ConfigLeave map[string]LeaveSettings

@@ -133,6 +133,12 @@ func main() {
 
 			configGroup.GET("/attendance_time/get", configHdl.GetAttendanceTime)
             configGroup.PUT("/attendance_time/update", configHdl.UpdateAttendanceTime)
+
+			configGroup.GET("/attendance_request/get", configHdl.GetAttendanceRequest)
+            configGroup.PUT("/attendance_request/update", configHdl.UpdateAttendanceRequest)
+
+			configGroup.GET("/leave/get", configHdl.GetLeaveConfig)
+            configGroup.PUT("/leave/update", configHdl.UpdateLeaveConfig)
 		}
 	}
 
