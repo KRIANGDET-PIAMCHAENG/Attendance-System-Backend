@@ -40,6 +40,8 @@ func main() {
 	configRepo := repository.NewConfigRepo(db)
 	configHdl := handler.NewConfigHandler(configRepo)
 
+	leaveHdl := handler.NewLeaveHandler(userRepo)
+
 	// 3. Initialize Router
 	r := gin.Default()
 
@@ -82,6 +84,12 @@ func main() {
             // POST /api/attendance/record
             attendance.POST("/record", userHdl.RecordAttendanceHandler)
         }
+
+		leave_request := api.Group("/leave_request")
+		{
+			leave_request.POST("/create", leaveHdl.CreateLeaveRequest)
+		}
+		
 
 	}
 
