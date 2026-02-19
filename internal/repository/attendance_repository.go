@@ -60,3 +60,23 @@ func (r *UserRepo) RecordAttendance(userID string, req RecordAttendanceRequest) 
 
 	return nil
 }
+
+type AttendanceRecord struct {
+	Date     time.Time `gorm:"column:date"`
+	CheckIn  *string   `gorm:"column:check_in"`  // 🚩 เปลี่ยนเป็น *string
+	CheckOut *string   `gorm:"column:check_out"` // 🚩 เปลี่ยนเป็น *string
+}
+
+func (r *UserRepo) GetAttendanceHistory(userID string) ([]AttendanceRecord, error) {
+	var records []AttendanceRecord
+	
+	sql := `
+		SELECT date, check_in, check_out 
+		FROM attendance 
+		WHERE user_id = $1 
+		ORDER BY date DESC
+	`
+	
+	err := r.db.Raw(sql, userID).Scan(&records).Error
+	return records, err
+}

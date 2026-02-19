@@ -7,6 +7,7 @@ import(
 	"github.com/gin-gonic/gin"
 	"my-app/pkg/utils"
 	"fmt"
+	"time"
 )
 
 type UserHandler struct {
@@ -462,4 +463,62 @@ func (h *UserHandler) RecordAttendanceHandler(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"message": "Success", "timestamp": req.Timestamp})
+}
+
+// ฟังก์ชันช่วยแปลง Weekday เป็นภาษาไทย
+func getThaiDOW(d time.Weekday) string {
+	days := []string{"อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"}
+	return days[d]
+}
+
+func (h *UserHandler) GetMyAttendanceHistory(c *gin.Context) {
+	// 1. ดึง User ID จาก JWT Token
+	userID := c.MustGet("user_id").(string)
+
+	// 2. ดึงข้อมูลจาก Database
+	records, err := h.repo.GetAttendanceHistory(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	// 3. เตรียม Struct สำหรับส่งเป็น JSON
+	type ResponseItem struct {
+		Date     string  `json:"date"`
+		Dow      string  `json:"dow"`
+		CheckIn  string  `json:"checkIn"`
+		CheckOut *string `json:"checkOut"` // ใช้ Pointer เพื่อให้แสดงค่า null ได้
+	}
+
+	var result []ResponseItem
+
+	for _, r := range records {
+		
+		// ดึงเวลา Check In (ตัดเอาแค่ 5 ตัวแรก เช่น "08:30:00" -> "08:30")
+		checkInStr := ""
+		if r.CheckIn != nil && len(*r.CheckIn) >= 5 {
+			checkInStr = (*r.CheckIn)[:5] 
+		}
+
+		// ดึงเวลา Check Out
+		var checkOutStr *string
+		if r.CheckOut != nil && len(*r.CheckOut) >= 5 {
+			co := (*r.CheckOut)[:5]
+			checkOutStr = &co
+		}
+
+		result = append(result, ResponseItem{
+			Date:     r.Date.Format("2006-01-02"), // Format เป็น YYYY-MM-DD
+			Dow:      getThaiDOW(r.Date.Weekday()), // แปลงเป็นภาษาไทย
+			CheckIn:  checkInStr,
+			CheckOut: checkOutStr,
+		})
+	}
+
+	// ถ้าไม่มีข้อมูล ให้ส่ง array เปล่าไปแทน null
+	if result == nil {
+		result = []ResponseItem{}
+	}
+
+	c.JSON(http.StatusOK, result)
 }
