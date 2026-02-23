@@ -86,6 +86,8 @@ func main() {
 			
 			// [NEW] GET /api/attendance/history
     		attendance.GET("/history", userHdl.GetMyAttendanceHistory)
+
+			attendance.GET("/today", userHdl.GetTodayAttendanceStatus)
         }
 
 		leave_request := api.Group("/leave_request")

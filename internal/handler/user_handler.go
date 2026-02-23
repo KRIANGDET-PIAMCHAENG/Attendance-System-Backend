@@ -522,3 +522,52 @@ func (h *UserHandler) GetMyAttendanceHistory(c *gin.Context) {
 
 	c.JSON(http.StatusOK, result)
 }
+
+// [NEW] ฟังก์ชันเช็คสถานะ Check-In/Check-Out ของวันนี้ (เวอร์ชันเวลาไทย)
+func (h *UserHandler) GetTodayAttendanceStatus(c *gin.Context) {
+	userID := c.MustGet("user_id").(string)
+
+	// 1. ล็อค Timezone เป็นเวลาประเทศไทย (UTC+7)
+	loc, err := time.LoadLocation("Asia/Bangkok")
+	if err != nil {
+		// ถ้าโหลด Timezone ไม่ได้ (บางกรณีใน Docker ที่ไม่มี tzdata) ให้ fallback ใช้เวลาเครื่อง
+		loc = time.Local
+	}
+	
+	// ดึงเวลา "ปัจจุบัน" ตามเวลาไทย
+	today := time.Now().In(loc)
+
+	// 2. ไปดึงข้อมูลจาก Database
+	record, err := h.repo.GetTodayAttendance(userID, today)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+		return
+	}
+
+	// 3. ถ้ายังไม่มีข้อมูลของวันนี้
+	if record == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"checkIn":  nil,
+			"checkOut": nil,
+		})
+		return
+	}
+
+	// 4. ตัด string เอาแค่ "HH:mm"
+	var checkInStr *string
+	if record.CheckIn != nil && len(*record.CheckIn) >= 5 {
+		ci := (*record.CheckIn)[:5]
+		checkInStr = &ci
+	}
+
+	var checkOutStr *string
+	if record.CheckOut != nil && len(*record.CheckOut) >= 5 {
+		co := (*record.CheckOut)[:5]
+		checkOutStr = &co
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"checkIn":  checkInStr,
+		"checkOut": checkOutStr,
+	})
+}

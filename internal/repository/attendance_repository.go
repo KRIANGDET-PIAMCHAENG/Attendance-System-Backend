@@ -80,3 +80,24 @@ func (r *UserRepo) GetAttendanceHistory(userID string) ([]AttendanceRecord, erro
 	err := r.db.Raw(sql, userID).Scan(&records).Error
 	return records, err
 }
+
+// [NEW] ฟังก์ชันสำหรับดึงข้อมูลการลงเวลาของ "วันนี้"
+func (r *UserRepo) GetTodayAttendance(userID string, date time.Time) (*AttendanceRecord, error) {
+	var record AttendanceRecord
+	dateStr := date.Format("2006-01-02") // เอาแค่วันที่ (YYYY-MM-DD)
+
+	// ค้นหาข้อมูลของ user คนนี้ เฉพาะวันที่กำหนด
+	sql := `SELECT date, check_in, check_out FROM attendance WHERE user_id = $1 AND date = $2`
+	result := r.db.Raw(sql, userID, dateStr).Scan(&record)
+
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	// ถ้า RowsAffected == 0 แปลว่าวันนี้ยังไม่ได้กดอะไรเลย
+	if result.RowsAffected == 0 {
+		return nil, nil
+	}
+
+	return &record, nil
+}
