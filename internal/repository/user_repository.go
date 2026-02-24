@@ -740,3 +740,17 @@ func (r *UserRepo) GetAllMembers() ([]MemberLite, error) {
 
 	return members, err
 }
+
+// 1. อัปเดต Path ลายเซ็น (ถ้าส่ง nil คือลบ)
+func (r *UserRepo) UpdateSignaturePath(userID string, path *string) error {
+	sql := `UPDATE users SET signature_path = $1 WHERE user_id = $2`
+	return r.db.Exec(sql, path, userID).Error
+}
+
+// 2. ดึง Path ลายเซ็น
+func (r *UserRepo) GetSignaturePath(userID string) (*string, error) {
+	var path *string
+	sql := `SELECT signature_path FROM users WHERE user_id = $1`
+	err := r.db.Raw(sql, userID).Scan(&path).Error
+	return path, err
+}

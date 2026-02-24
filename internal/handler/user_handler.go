@@ -8,6 +8,10 @@ import(
 	"my-app/pkg/utils"
 	"fmt"
 	"time"
+
+	"os"
+	"path/filepath"
+	"github.com/google/uuid"
 )
 
 type UserHandler struct {
@@ -570,4 +574,96 @@ func (h *UserHandler) GetTodayAttendanceStatus(c *gin.Context) {
 		"checkIn":  checkInStr,
 		"checkOut": checkOutStr,
 	})
+}
+
+// ==========================================
+// 1. GET /signature (ส่งเป็นไฟล์รูปกลับไปเลย)
+// ==========================================
+func (h *UserHandler) GetSignature(c *gin.Context) {
+	userID := c.MustGet("user_id").(string)
+
+	path, err := h.repo.GetSignaturePath(userID)
+	if err != nil || path == nil || *path == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบลายเซ็น"})
+		return
+	}
+
+	// เช็คว่าไฟล์มีอยู่จริงบน Server ไหม
+	if _, err := os.Stat(*path); os.IsNotExist(err) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไฟล์ลายเซ็นสูญหาย"})
+		return
+	}
+
+	// ส่งเป็น Byte Array ให้ Frontend โดยอัตโนมัติ (ตรงสเปค Frontend เป๊ะ)
+	c.File(*path)
+}
+
+// ==========================================
+// 2. PUT /signature/update (รับไฟล์มาเซฟ)
+// ==========================================
+func (h *UserHandler) UpdateSignature(c *gin.Context) {
+	userID := c.MustGet("user_id").(string)
+
+	file, err := c.FormFile("signature") // รับคีย์ชื่อ "signature"
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ไม่พบไฟล์ลายเซ็น"})
+		return
+	}
+
+	// สร้าง Folder ย่อยตามปี/เดือน
+	uploadDir := "uploads/signatures/" + time.Now().Format("2006/01")
+	os.MkdirAll(uploadDir, os.ModePerm)
+
+	// ตั้งชื่อไฟล์ใหม่ด้วย UUID
+	ext := filepath.Ext(file.Filename)
+	savePath := filepath.Join(uploadDir, uuid.New().String()+ext)
+
+	// เซฟไฟล์ลง Server
+	if err := c.SaveUploadedFile(file, savePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "บันทึกไฟล์ไม่สำเร็จ"})
+		return
+	}
+
+	// อัปเดต Path ลง DB
+	if err := h.repo.UpdateSignaturePath(userID, &savePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "อัปเดตฐานข้อมูลไม่สำเร็จ"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "อัปเดตลายเซ็นเรียบร้อย"})
+}
+
+func getWD() string {
+    dir, _ := os.Getwd()
+    return dir
+}
+
+// ==========================================
+// 3. DELETE /signature/clear (ลบไฟล์และเคลียร์ DB)
+// ==========================================
+func (h *UserHandler) ClearSignature(c *gin.Context) {
+	userID := c.MustGet("user_id").(string)
+
+	path, err := h.repo.GetSignaturePath(userID)
+    if err == nil && path != nil && *path != "" {
+        // 🔍 ใส่ Log เช็ค Path เต็มๆ อีกรอบ
+        log.Printf("Current Working Dir: %s", getWD()) // เดี๋ยวผมให้ฟังก์ชันเสริมด้านล่าง
+        log.Printf("Attempting to delete file at: %s", *path)
+
+        errRemove := os.Remove(*path) 
+        if errRemove != nil {
+            // 🚨 จุดสำคัญ: ดูว่ามันฟ้องว่าอะไร!
+            log.Printf("❌ Remove failed: %v", errRemove)
+        } else {
+            log.Println("✅ File deleted successfully from disk")
+        }
+    }
+
+	// อัปเดต DB ให้เป็น NULL
+	if err := h.repo.UpdateSignaturePath(userID, nil); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "เคลียร์ฐานข้อมูลไม่สำเร็จ"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "ลบลายเซ็นเรียบร้อย"})
 }

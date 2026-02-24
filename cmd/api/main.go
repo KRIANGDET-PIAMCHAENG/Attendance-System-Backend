@@ -80,21 +80,27 @@ func main() {
 		api.GET("/init", userHdl.InitInfo)
 
 		attendance := api.Group("/attendance")
-        {
-            // POST /api/attendance/record
-            attendance.POST("/record", userHdl.RecordAttendanceHandler)
-			
+		{
+			// POST /api/attendance/record
+			attendance.POST("/record", userHdl.RecordAttendanceHandler)
+
 			// [NEW] GET /api/attendance/history
-    		attendance.GET("/history", userHdl.GetMyAttendanceHistory)
+			attendance.GET("/history", userHdl.GetMyAttendanceHistory)
 
 			attendance.GET("/today", userHdl.GetTodayAttendanceStatus)
-        }
+		}
 
 		leave_request := api.Group("/leave_request")
 		{
 			leave_request.POST("/create", leaveHdl.CreateLeaveRequest) // /api/leave_request/create
 		}
-		
+
+		signature := api.Group("/signature")
+		{
+			signature.GET("/get", userHdl.GetSignature)
+			signature.PUT("/update", userHdl.UpdateSignature)
+			signature.DELETE("/clear", userHdl.ClearSignature)
+		}
 
 	}
 
@@ -155,13 +161,13 @@ func main() {
 			configGroup.PUT("/budget_year/update", configHdl.UpdateBudgetYear)
 
 			configGroup.GET("/attendance_time/get", configHdl.GetAttendanceTime)
-            configGroup.PUT("/attendance_time/update", configHdl.UpdateAttendanceTime)
+			configGroup.PUT("/attendance_time/update", configHdl.UpdateAttendanceTime)
 
 			configGroup.GET("/attendance_request/get", configHdl.GetAttendanceRequest)
-            configGroup.PUT("/attendance_request/update", configHdl.UpdateAttendanceRequest)
+			configGroup.PUT("/attendance_request/update", configHdl.UpdateAttendanceRequest)
 
 			configGroup.GET("/leave/get", configHdl.GetLeaveConfig)
-            configGroup.PUT("/leave/update", configHdl.UpdateLeaveConfig)
+			configGroup.PUT("/leave/update", configHdl.UpdateLeaveConfig)
 		}
 	}
 
