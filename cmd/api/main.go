@@ -95,6 +95,13 @@ func main() {
 			leave_request.POST("/create", leaveHdl.CreateLeaveRequest) // /api/leave_request/create
 		}
 
+		leave_status := api.Group("/leave_status")
+		{
+			leave_status.GET("/pending", leaveHdl.GetPendingLeaves)
+			leave_status.GET("/recent", leaveHdl.GetRecentLeaves)
+			leave_status.GET("/filter_range", leaveHdl.GetLeaveFilterRange)
+		}
+
 		signature := api.Group("/signature")
 		{
 			signature.GET("/get", userHdl.GetSignature)
