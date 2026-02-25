@@ -81,11 +81,11 @@ func (h *LeaveHandler) CreateLeaveRequest(c *gin.Context) {
 	// 📂 5. จัดการไฟล์แนบ (Files Array)
 	// ==========================================
 	form, err := c.MultipartForm()
-	var filesCount int
+	//var filesCount int
 
 	if err == nil && form != nil {
 		files := form.File["files"]
-		filesCount = len(files)
+		//filesCount = len(files)
 
 		for _, file := range files {
 			ext := filepath.Ext(file.Filename)
@@ -107,8 +107,8 @@ func (h *LeaveHandler) CreateLeaveRequest(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":     "Leave request created",
-		"files_count": filesCount,
+		// ใช้ fmt.Sprintf เพื่อเติม LEV และ 0 ให้ครบ 12 หลักตามสเปคเป๊ะๆ
+		"request-id": fmt.Sprintf("LEV%012d", leaveID), 
 	})
 }
 
