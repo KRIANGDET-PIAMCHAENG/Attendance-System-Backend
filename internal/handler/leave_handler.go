@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"path/filepath"
 	"time"
-
+    "strconv"
 	"my-app/internal/repository"
-
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"os"
+    "strings"
 )
 
 type LeaveHandler struct {
@@ -78,33 +78,38 @@ func (h *LeaveHandler) CreateLeaveRequest(c *gin.Context) {
 	}
 
 	// ==========================================
-	// 📂 5. จัดการไฟล์แนบ (Files Array)
-	// ==========================================
-	form, err := c.MultipartForm()
-	//var filesCount int
+    // 📂 5. จัดการไฟล์แนบ (Files Array)
+    // ==========================================
+    form, err := c.MultipartForm()
 
-	if err == nil && form != nil {
-		files := form.File["files"]
-		//filesCount = len(files)
+    if err == nil && form != nil {
+        files := form.File["files"]
 
-		for _, file := range files {
-			ext := filepath.Ext(file.Filename)
-			newFileName := uuid.New().String() + ext
+        for _, file := range files {
+            ext := filepath.Ext(file.Filename)
+            newFileName := uuid.New().String() + ext
 
-			uploadDir := "uploads/leave_requests/" + time.Now().Format("2006/01")
-			if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
-				continue
-			}
+            // 🌟 1. ดึงชนิดไฟล์ (ตัดจุด . ออกให้เหลือแค่ pdf, jpg)
+            fileType := strings.TrimPrefix(ext, ".")
+            
+            // 🌟 2. ดึงขนาดไฟล์จริง (ของแท้ 100% จาก multipart)
+            fileSize := file.Size 
 
-			dst := filepath.Join(uploadDir, newFileName)
+            uploadDir := "uploads/leave_requests/" + time.Now().Format("2006/01")
+            if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
+                continue
+            }
 
-			if err := c.SaveUploadedFile(file, dst); err != nil {
-				continue
-			}
+            dst := filepath.Join(uploadDir, newFileName)
 
-			h.repo.SaveLeaveAttachment(leaveID, dst, file.Filename)
-		}
-	}
+            if err := c.SaveUploadedFile(file, dst); err != nil {
+                continue
+            }
+
+            // 🌟 3. อัปเดตการเรียกใช้ Repo โดยส่ง fileType และ fileSize พ่วงไปด้วย
+            h.repo.SaveLeaveAttachment(leaveID, dst, file.Filename, fileType, fileSize)
+        }
+    }
 
 	c.JSON(http.StatusOK, gin.H{
 		// ใช้ fmt.Sprintf เพื่อเติม LEV และ 0 ให้ครบ 12 หลักตามสเปคเป๊ะๆ
@@ -147,11 +152,10 @@ func (h *LeaveHandler) GetPendingLeaves(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"pending": pendingList})
 }
 
-// 2. Handler สำหรับ Get Recent
 func (h *LeaveHandler) GetRecentLeaves(c *gin.Context) {
 	userID := c.MustGet("user_id").(string)
-
-	startDate := c.Query("startDate")
+	
+	startDate := c.Query("startDate") 
 	endDate := c.Query("endDate")
 
 	records, err := h.repo.GetRecentLeaves(userID, startDate, endDate)
@@ -160,7 +164,6 @@ func (h *LeaveHandler) GetRecentLeaves(c *gin.Context) {
 		return
 	}
 
-	// 🌟 ตั้งค่า Timezone เป็นเวลาไทย
 	loc, err := time.LoadLocation("Asia/Bangkok")
 	if err != nil {
 		loc = time.FixedZone("UTC+7", 7*60*60)
@@ -168,17 +171,22 @@ func (h *LeaveHandler) GetRecentLeaves(c *gin.Context) {
 
 	var recentList []map[string]interface{}
 	for _, r := range records {
-		// 🌟 แปลงเวลาเป็น Local (ไทย)
 		thaiTime := r.DateStart.In(loc)
+
+		// 🚩 ตรรกะการกำหนด Status String
+		finalStatus := r.Status
+		if r.Status == "pending" {
+			finalStatus = "overdue" // ถ้าหลุดมาจาก Query ข้างบนแล้วยังเป็น pending แปลว่ามัน overdue
+		}
 
 		recentList = append(recentList, map[string]interface{}{
 			"id":         fmt.Sprintf("LEV%012d", r.ID),
 			"leave-type": r.LeaveType,
-			// 🌟 เปลี่ยน Format เป็น +07:00
 			"date-start": thaiTime.Format("2006-01-02T15:04:05.000+07:00"),
-			"approved":   r.Status == "approved",
+			"status":     finalStatus, // ส่งค่า 'approved', 'rejected' หรือ 'overdue'
 		})
 	}
+
 	if recentList == nil {
 		recentList = []map[string]interface{}{}
 	}
@@ -220,4 +228,84 @@ func (h *LeaveHandler) GetLeaveFilterRange(c *gin.Context) {
 		"start": minDate.In(loc).Format("2006-01-02T15:04:05.000+07:00"),
 		"end":   maxDate.In(loc).Format("2006-01-02T15:04:05.000+07:00"),
 	})
+}
+
+func (h *LeaveHandler) GetLeaveDetail(c *gin.Context) {
+	userID := c.MustGet("user_id").(string)
+
+	// 1. รับ ID จาก Query (เช่น ?request-id=LEV000000000015)
+	reqIDStr := c.Query("request-id")
+	if len(reqIDStr) <= 3 || reqIDStr[:3] != "LEV" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID ไม่ถูกต้อง"})
+		return
+	}
+
+	// 2. ตัด "LEV" ออก และแปลง 000000000015 เป็นตัวเลข
+	leaveID, err := strconv.Atoi(reqIDStr[3:])
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID ใบลาไม่ถูกต้อง"})
+		return
+	}
+
+	// 3. ดึงข้อมูลจาก Repository
+	detail, attachments, err := h.repo.GetLeaveDetail(userID, leaveID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบข้อมูลใบลา"})
+		return
+	}
+
+	// 4. ตั้งค่า Timezone ไทย
+	loc, err := time.LoadLocation("Asia/Bangkok")
+	if err != nil {
+		loc = time.FixedZone("UTC+7", 7*60*60)
+	}
+
+	// ตรรกะเช็คสถานะ overdue
+	finalStatus := detail.Status
+	if finalStatus == "pending" && detail.DateFrom.Before(time.Now()) {
+		finalStatus = "overdue"
+	}
+
+	// 5. ปั้นข้อมูลไฟล์แนบ
+	var evidenceFiles []map[string]interface{}
+	for _, att := range attachments {
+		evidenceFiles = append(evidenceFiles, map[string]interface{}{
+			"file-name": att.OriginalName,
+			"file-url":  att.FilePath, // อนาคตอาจจะเอา Domain มาต่อหน้า FilePath ตรงนี้
+			"file-type": att.FileType,
+			"file-size": att.FileSize,
+		})
+	}
+	if evidenceFiles == nil {
+		evidenceFiles = []map[string]interface{}{}
+	}
+
+	// 6. ปั้นข้อมูลการอนุมัติ (เช็ค nil pointer ด้วย)
+	approveDetail := map[string]interface{}{
+		"status":       finalStatus,
+		"approve-role": detail.ApproveRole,
+		"approver":     detail.Approver,
+		"reason":       detail.ApproveReason,
+		"approve-date": nil,
+	}
+	if detail.ApproveDate != nil {
+		approveDetail["approve-date"] = detail.ApproveDate.In(loc).Format("2006-01-02T15:04:05.000+07:00")
+	}
+
+	// 7. ส่ง JSON กลับไปให้ Frontend
+	response := gin.H{
+		"request-detail": map[string]interface{}{
+			"leave-type":        detail.LeaveType,
+			"date-from":         detail.DateFrom.In(loc).Format("2006-01-02T15:04:05.000+07:00"),
+			"date-to":           detail.DateTo.In(loc).Format("2006-01-02T15:04:05.000+07:00"),
+			"from-date-morning": detail.FromDateMorning,
+			"to-date-morning":   detail.ToDateMorning,
+			"remark":            detail.Remark,
+			"evidence-files":    evidenceFiles,
+			"request-date":      detail.CreatedAt.In(loc).Format("2006-01-02T15:04:05.000+07:00"),
+		},
+		"approve-detail": approveDetail,
+	}
+
+	c.JSON(http.StatusOK, response)
 }

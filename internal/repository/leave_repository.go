@@ -63,13 +63,22 @@ func (r *UserRepo) SaveLeaveRequest(userID string, req CreateLeaveRequest, signa
 	return id, nil
 }
 
-// SaveLeaveAttachment เหมือนเดิม
-func (r *UserRepo) SaveLeaveAttachment(leaveID int, path string, originalName string) error {
-	sql := `
-		INSERT INTO leave_attachments (leave_request_id, file_path, original_name) 
-		VALUES ($1, $2, $3)
+func (r *UserRepo) SaveLeaveAttachment(leaveID int, filePath string, fileName string, fileType string, fileSize int64) error {
+    
+    // 🌟 อัปเดตคำสั่ง SQL ให้ INSERT คอลัมน์ใหม่ลงไปด้วย
+    sql := `
+		INSERT INTO leave_attachments (
+			leave_request_id, file_path, original_name, file_type, file_size
+		) 
+		VALUES ($1, $2, $3, $4, $5)
 	`
-	return r.db.Exec(sql, leaveID, path, originalName).Error
+
+    // 🌟 ส่งตัวแปร 5 ตัวเข้าไปให้ครบ
+    if err := r.db.Exec(sql, leaveID, filePath, fileName, fileType, fileSize).Error; err != nil {
+        return err
+    }
+
+    return nil
 }
 
 // ตรวจสอบว่ามีใบลาที่ซ้อนทับกันอยู่หรือไม่
@@ -116,13 +125,15 @@ func (r *UserRepo) GetPendingLeaves(userID string) ([]LeaveStatusRecord, error) 
 	return leaves, err
 }
 
-// 2. ดึงข้อมูลที่รู้ผลแล้ว (Recent) พร้อม Filter วันที่
 func (r *UserRepo) GetRecentLeaves(userID string, startDate string, endDate string) ([]LeaveStatusRecord, error) {
 	var leaves []LeaveStatusRecord
 	
+	// Query: ดึงรายการที่ (ไม่ใช่ pending) OR (เป็น pending แต่เลยกำหนดวันลาแล้ว)
 	query := `SELECT id, leave_type, date_from, status 
 			  FROM leave_requests 
-			  WHERE user_id = ? AND status != 'pending'`
+			  WHERE user_id = ? 
+			    AND (status != 'pending' OR (status = 'pending' AND date_from < CURRENT_TIMESTAMP))`
+	
 	args := []interface{}{userID}
 
 	if startDate != "" {
@@ -153,4 +164,63 @@ func (r *UserRepo) GetLeaveFilterRange(userID string) (*time.Time, *time.Time, e
 			
 	err := r.db.Raw(sql, userID).Scan(&result).Error
 	return result.MinDate, result.MaxDate, err
+}
+
+
+// 1. สร้าง Struct มารับข้อมูล
+type LeaveDetailRecord struct {
+	ID              int
+	LeaveType       string
+	DateFrom        time.Time
+	DateTo          time.Time
+	FromDateMorning bool
+	ToDateMorning   bool
+	Remark          string
+	CreatedAt       time.Time
+	Status          string
+	// ฟิลด์จากตาราง leave_approvals (ใช้ Pointer เผื่อยังไม่มีคนมาอนุมัติ จะได้เป็น nil ได้)
+	Approver        *string
+	ApproveRole     *string
+	ApproveReason   *string
+	ApproveDate     *time.Time
+}
+
+type LeaveAttachmentRecord struct {
+    OriginalName string `gorm:"column:original_name"`
+    FilePath     string `gorm:"column:file_path"`
+    FileType     string `gorm:"column:file_type"` // เพิ่ม tag
+    FileSize     int64  `gorm:"column:file_size"` // เพิ่ม tag
+}
+
+// 2. ฟังก์ชัน GetLeaveDetail (ใช้ LEFT JOIN)
+func (r *UserRepo) GetLeaveDetail(userID string, leaveID int) (*LeaveDetailRecord, []LeaveAttachmentRecord, error) {
+	var detail LeaveDetailRecord
+	
+	// ดึงข้อมูลใบลาหลัก พร้อมข้อมูลผู้อนุมัติล่าสุด (ถ้ามี)
+	err := r.db.Table("leave_requests lr").
+		Select(`
+			lr.id, lr.leave_type, lr.date_from, lr.date_to, 
+			lr.from_date_morning, lr.to_date_morning, lr.remark, lr.created_at, lr.status,
+			la.approver_name as approver, 
+			la.approve_role, 
+			la.reason as approve_reason, 
+			la.created_at as approve_date
+		`).
+		Joins("LEFT JOIN leave_approvals la ON la.leave_request_id = lr.id").
+		Where("lr.id = ? AND lr.user_id = ?", leaveID, userID).
+		Order("la.created_at DESC"). // ถ้ามีการอนุมัติหลายรอบ เอาล่าสุดมาแสดง
+		First(&detail).Error
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// ดึงข้อมูลไฟล์แนบ (หมายเหตุ: ถ้าตาราง leave_attachments ของคุณไม่มีฟิลด์ file_size หรือ file_type ให้ลบออกจาก Select ตรงนี้ด้วยนะครับ)
+	var attachments []LeaveAttachmentRecord
+	r.db.Table("leave_attachments").
+        Select("original_name, file_path, file_type, file_size"). // ✅ เพิ่ม 2 คอลัมน์นี้เข้าไป
+        Where("leave_request_id = ?", leaveID).
+        Find(&attachments)
+
+	return &detail, attachments, nil
 }
