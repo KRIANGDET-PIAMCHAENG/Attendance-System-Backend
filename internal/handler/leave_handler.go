@@ -309,3 +309,107 @@ func (h *LeaveHandler) GetLeaveDetail(c *gin.Context) {
 
 	c.JSON(http.StatusOK, response)
 }
+
+func (h *LeaveHandler) GetLeaveInfo(c *gin.Context) {
+	// 1. รับ UserID จาก Context (JWT Token)
+	userID := c.MustGet("user_id").(string)
+
+	// 2. รับค่าประเภทการลาจาก Query (เช่น ?leave-type=sick)
+	leaveType := c.Query("leave-type")
+	if leaveType == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ leave-type"})
+		return
+	}
+
+	// 3. เรียกใช้งาน Repository เพื่อดึงโควต้าของปีงบปัจจุบัน
+	used, max, err := h.repo.GetLeaveBalanceInfo(userID, leaveType)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 4. ส่งข้อมูลกลับ (ตัวเลข Float จะถูกแปลงเป็น JSON Number เช่น 10.5 และ 60)
+	c.JSON(http.StatusOK, gin.H{
+		"used": used,
+		"max":  max,
+	})
+}
+
+func (h *LeaveHandler) ResendLeaveRequest(c *gin.Context) {
+	// 1. ดึง User ID
+	userID := c.MustGet("user_id").(string)
+
+	// 2. รับค่าจาก Text Form
+	reqIDStr := c.PostForm("request-id")
+	remark := c.PostForm("remark")
+	// 🌟 ทริค: Frontend ต้องส่ง Array มาในชื่อ "old-files" หรือ "old-files[]"
+	oldFiles := c.PostFormArray("old-files") 
+
+	// ตัดคำว่า "LEV" ออกแล้วแปลงเป็นตัวเลข (เช่น LEV000000000012 -> 12)
+	idStr := strings.TrimPrefix(reqIDStr, "LEV")
+	leaveID, err := strconv.Atoi(idStr)
+	if err != nil || leaveID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ request-id ไม่ถูกต้อง"})
+		return
+	}
+
+	// ==========================================
+	// 3. จัดการไฟล์ลายเซ็นใหม่ (ถ้ามีการส่งมาทับของเดิม)
+	// ==========================================
+	var signaturePath *string
+	sigFile, err := c.FormFile("signature")
+	if err == nil && sigFile != nil {
+		uploadDir := "uploads/signatures/" + time.Now().Format("2006/01")
+		os.MkdirAll(uploadDir, os.ModePerm)
+
+		ext := filepath.Ext(sigFile.Filename)
+		newSigName := uuid.New().String() + ext
+		dst := filepath.Join(uploadDir, newSigName)
+
+		if err := c.SaveUploadedFile(sigFile, dst); err == nil {
+			signaturePath = &dst
+		}
+	}
+
+	// ==========================================
+	// 4. จัดการไฟล์แนบใหม่ (New Files)
+	// ==========================================
+	form, err := c.MultipartForm()
+	var newAttachments []repository.NewAttachment
+
+	if err == nil && form != nil {
+		files := form.File["files"]
+		for _, file := range files {
+			ext := filepath.Ext(file.Filename)
+			newFileName := uuid.New().String() + ext
+			fileType := strings.TrimPrefix(ext, ".")
+
+			uploadDir := "uploads/leave_requests/" + time.Now().Format("2006/01")
+			os.MkdirAll(uploadDir, os.ModePerm)
+			dst := filepath.Join(uploadDir, newFileName)
+
+			if err := c.SaveUploadedFile(file, dst); err == nil {
+				newAttachments = append(newAttachments, repository.NewAttachment{
+					FilePath:     dst,
+					OriginalName: file.Filename,
+					FileType:     fileType,
+					FileSize:     file.Size,
+				})
+			}
+		}
+	}
+
+	// ==========================================
+	// 5. ส่งให้ Repository บันทึกข้อมูล
+	// ==========================================
+	if err := h.repo.ResendLeaveRequest(userID, leaveID, remark, oldFiles, signaturePath, newAttachments); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ไม่สามารถอัปเดตข้อมูลใบลาได้", "details": err.Error()})
+		return
+	}
+
+	// ส่ง 200 OK กลับไป
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "ยื่นใบลาใหม่อีกครั้งสำเร็จ",
+		"request-id": reqIDStr,
+	})
+}

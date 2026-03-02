@@ -10,9 +10,15 @@ import (
 	"my-app/internal/repository"
 	"os"
 	"time"
+
+	
+	// อย่าลืม import cron กับ repository ของคุณ
+	"github.com/robfig/cron/v3"
+	// "your_project/internal/repository"
 )
 
 func main() {
+	
 	// 1. Load .env file (อ่านค่าจากไฟล์ .env เข้าระบบ)
 	// ถ้าหาไฟล์ไม่เจอ จะพ่น log เตือน (แต่ไม่ error พัง) เผื่อรันบน Docker ที่ set env ไว้แล้ว
 	if err := godotenv.Load(); err != nil {
@@ -41,6 +47,29 @@ func main() {
 	configHdl := handler.NewConfigHandler(configRepo)
 
 	leaveHdl := handler.NewLeaveHandler(userRepo)
+
+	// 🌟 [NEW] 3.1 ประกาศ HolidayRepo สำหรับจัดการวันหยุด
+	holidayRepo := repository.NewHolidayRepo(db)
+
+	// ==========================================
+	// 🌟 [NEW] Setup Cron Job (ทำงานหลังบ้าน)
+	// ==========================================
+	c := cron.New()
+
+	// ตั้งให้ทำงานทุกๆ วันที่ 1 ของเดือน เวลา 00:00 น. ("นาที ชั่วโมง วัน เดือน วันในสัปดาห์")
+	_, cronErr := c.AddFunc("0 0 1 * *", func() {
+		err := holidayRepo.FetchAndSyncHolidays()
+		if err != nil {
+			log.Println("[CRON] Auto Sync Holidays Error:", err)
+		}
+	})
+
+	if cronErr != nil {
+		log.Fatalf("ตั้งค่า Cron Job ไม่สำเร็จ: %v", cronErr)
+	}
+
+	c.Start()      // สั่งให้เริ่มเดินนาฬิกา
+	defer c.Stop() // ปิด Cron เมื่อ Server ดับ
 
 	// 3. Initialize Router
 	r := gin.Default()
@@ -93,6 +122,9 @@ func main() {
 		leave_request := api.Group("/leave_request")
 		{
 			leave_request.POST("/create", leaveHdl.CreateLeaveRequest) // /api/leave_request/create
+			leave_request.GET("/leave_info", leaveHdl.GetLeaveInfo)
+
+			leave_request.PUT("/resend", leaveHdl.ResendLeaveRequest)
 		}
 
 		leave_status := api.Group("/leave_status")
@@ -101,7 +133,6 @@ func main() {
 			leave_status.GET("/recent", leaveHdl.GetRecentLeaves)
 			leave_status.GET("/filter_range", leaveHdl.GetLeaveFilterRange)
 
-			
 			leave_status.GET("/detail", leaveHdl.GetLeaveDetail)
 		}
 

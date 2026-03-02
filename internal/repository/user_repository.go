@@ -210,7 +210,7 @@ func (r *UserRepo) GetAllUsers() ([]UserAPI, error) {
 		userIDs = append(userIDs, users[i].ID)
 	}
 
-	// 3. ดึง Role ของ "ทุกคนในรายการ" มาในครั้งเดียว (Query ที่ 2) 
+	// 3. ดึง Role ของ "ทุกคนในรายการ" มาในครั้งเดียว (Query ที่ 2)
 	// ใช้ WHERE IN (...) แทนการวนลูป
 	type UserRoleResult struct {
 		UserID    string `json:"user_id"`
@@ -388,19 +388,21 @@ func (r *UserRepo) CreateUserFull(req CreateUserFullRequest) error {
 		}
 
 		// ใช้ปีปัจจุบันเป็นหลัก
-		currentYear := time.Now().Year()
+		currentYear, err := GetBudgetYear(tx, time.Now())
+		if err != nil {
+			return err // คืนค่า Error ถ้าดึง Config ไม่ผ่าน
+		}
 
 		for nameEn, days := range leaveMap {
 			var typeID int
-			// หา ID จากตาราง leave_types โดยใช้ชื่อภาษาอังกฤษ (name_en)
-			// LOWER() เพื่อป้องกัน case sensitive (เช่น Sick vs sick)
+			// หา ID จากตาราง leave_types ...
 			if err := tx.Table("leave_types").Select("id").Where("LOWER(name_en) = LOWER(?)", nameEn).Scan(&typeID).Error; err == nil && typeID != 0 {
 
 				// Insert ลง leave_balances
 				if err := tx.Table("leave_balances").Create(map[string]interface{}{
 					"user_id":       req.ID,
 					"leave_type_id": typeID,
-					"year":          currentYear,
+					"year":          currentYear, // ✅ ค่าปีงบประมาณที่ถูกต้องจะลง Database ตรงนี้
 					"days_allowed":  days,
 					"days_used":     0,
 				}).Error; err != nil {
@@ -689,7 +691,6 @@ func (r *UserRepo) GetUserRoles(userID string) ([]string, error) {
 	return roles, nil
 }
 
-
 // CreateRole สร้าง Role ใหม่และเพิ่มสมาชิก
 func (r *UserRepo) CreateRole(req CreateRoleRequest) error {
 	// เริ่ม Transaction
@@ -709,7 +710,7 @@ func (r *UserRepo) CreateRole(req CreateRoleRequest) error {
 	}
 
 	// 2. เพิ่มสมาชิก (ถ้ามี)
-	// สมมติว่า members คือ "ลูกน้องในสังกัด" (subordinate_manager_roles) 
+	// สมมติว่า members คือ "ลูกน้องในสังกัด" (subordinate_manager_roles)
 	// หรือถ้าหมายถึง "คนที่เป็น Role นี้" ให้เปลี่ยนไปใช้ตาราง user_roles แทนนะครับ
 	if len(req.Members) > 0 {
 		for _, member := range req.Members {
@@ -728,10 +729,11 @@ func (r *UserRepo) CreateRole(req CreateRoleRequest) error {
 	// Commit Transaction
 	return tx.Commit().Error
 }
+
 // GetAllMembers ดึงรายชื่อพนักงานทั้งหมด (เฉพาะชื่อและรูป)
 func (r *UserRepo) GetAllMembers() ([]MemberLite, error) {
 	var members []MemberLite
-	
+
 	// Query เฉพาะ Column ที่จำเป็นจาก user_info
 	// GORM จะ Map Column เข้า Struct ให้อัตโนมัติตาม Tag gorm:"column:..."
 	err := r.db.Table("user_info").

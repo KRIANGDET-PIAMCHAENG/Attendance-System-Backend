@@ -3,6 +3,8 @@ package repository
 import (
 	"errors"
 	"time"
+	"os"
+	"gorm.io/gorm"
 )
 
 type CreateLeaveRequest struct {
@@ -223,4 +225,106 @@ func (r *UserRepo) GetLeaveDetail(userID string, leaveID int) (*LeaveDetailRecor
         Find(&attachments)
 
 	return &detail, attachments, nil
+}
+
+// สร้าง Struct ไว้รับค่าที่ Query ออกมา
+type LeaveBalanceInfo struct {
+	DaysUsed    float64 `gorm:"column:days_used"`
+	DaysAllowed float64 `gorm:"column:days_allowed"`
+}
+
+func (r *UserRepo) GetLeaveBalanceInfo(userID string, leaveTypeStr string) (float64, float64, error) {
+	var typeID int
+
+	// 1. หา ID จากตาราง leave_types โดยใช้ชื่อภาษาอังกฤษ (ป้องกัน case sensitive)
+	if err := r.db.Table("leave_types").Select("id").Where("LOWER(name_en) = LOWER(?)", leaveTypeStr).Scan(&typeID).Error; err != nil || typeID == 0 {
+		return 0, 0, errors.New("ไม่พบประเภทการลานี้ในระบบ")
+	}
+
+	// 2. คำนวณหา "ปีงบประมาณปัจจุบัน" แบบ Real-time
+	currentYear, err := GetBudgetYear(r.db, time.Now())
+	if err != nil {
+		return 0, 0, errors.New("ไม่สามารถคำนวณปีงบประมาณได้")
+	}
+
+	// 3. ดึงโควต้าวันลาของ User คนนี้ เฉพาะปีงบประมาณปัจจุบันเท่านั้น!
+	var balance LeaveBalanceInfo
+	err = r.db.Table("leave_balances").
+		Select("days_used, days_allowed").
+		Where("user_id = ? AND leave_type_id = ? AND year = ?", userID, typeID, currentYear).
+		First(&balance).Error
+
+	if err != nil {
+		// ถ้าหาไม่เจอ (เช่น เพิ่งขึ้นปีงบประมาณใหม่ แต่ระบบยังไม่ได้รันโควต้าให้)
+		// เราสามารถ Return 0, 0 ไปก่อนเพื่อไม่ให้แอปฝั่ง Frontend พังครับ
+		return 0, 0, nil 
+	}
+
+	return balance.DaysUsed, balance.DaysAllowed, nil
+}
+
+// สร้าง Struct เพื่อรับไฟล์ใหม่ที่จะ Insert
+type NewAttachment struct {
+	FilePath     string
+	OriginalName string
+	FileType     string
+	FileSize     int64
+}
+
+func (r *UserRepo) ResendLeaveRequest(userID string, leaveID int, remark string, oldFiles []string, signaturePath *string, newFiles []NewAttachment) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1. อัปเดตข้อมูลใบลาหลัก (รีเซ็ตสถานะเป็น pending)
+		updates := map[string]interface{}{
+			"status": "pending",
+			"remark": remark,
+		}
+		if signaturePath != nil {
+			updates["signature_path"] = *signaturePath
+		}
+
+		if err := tx.Table("leave_requests").
+			Where("id = ? AND user_id = ?", leaveID, userID).
+			Updates(updates).Error; err != nil {
+			return err
+		}
+
+		// 2. จัดการไฟล์เก่า (หาไฟล์ที่ต้อง "ลบทิ้ง")
+		var filesToDelete []string
+		query := tx.Table("leave_attachments").Where("leave_request_id = ?", leaveID)
+		
+		// ถ้ามีไฟล์เก่าที่ต้องการเก็บไว้ ให้หาไฟล์ที่ชื่อ "ไม่อยู่" ในลิสต์นั้น
+		if len(oldFiles) > 0 {
+			query = query.Where("original_name NOT IN ?", oldFiles)
+		}
+
+		// ดึง path ของไฟล์ที่กำลังจะโดนลบออกมาเก็บไว้ก่อน เพื่อไปลบออกจาก Harddisk
+		if err := query.Pluck("file_path", &filesToDelete).Error; err != nil {
+			return err
+		}
+
+		// ลบข้อมูลไฟล์ออกจาก Database
+		if err := query.Delete(nil).Error; err != nil {
+			return err
+		}
+
+		// 🗑️ ลบไฟล์จริงออกจาก Server (Best Effort: ลบได้ก็ลบ ลบไม่ได้ไม่เป็นไร ไม่ให้กระทบ DB)
+		for _, path := range filesToDelete {
+			_ = os.Remove(path)
+		}
+
+		// 3. เพิ่มไฟล์ใหม่ (ถ้ามี) ลง Database
+		for _, att := range newFiles {
+			if err := tx.Table("leave_attachments").Create(map[string]interface{}{
+				"leave_request_id": leaveID,
+				"file_path":        att.FilePath,
+				"original_name":    att.OriginalName,
+				"file_type":        att.FileType,
+				"file_size":        att.FileSize,
+			}).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
