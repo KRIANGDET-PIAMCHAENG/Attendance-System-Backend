@@ -6,3 +6,6 @@
 
 # Local data/previews
 preview.json
+
+uploads/
+*.tar.gz
