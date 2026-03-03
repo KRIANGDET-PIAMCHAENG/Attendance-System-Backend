@@ -74,6 +74,8 @@ func main() {
 	// 3. Initialize Router
 	r := gin.Default()
 
+	r.Static("/uploads", "./uploads")
+
 	// --- [NEW] ติดตั้ง CORS Middleware เพื่อให้ Flutter (Web/Mobile) ยิงข้าม Domain ได้ ---
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"}, // อนุญาตทุกที่ (เหมาะสำหรับช่วงพัฒนา)
