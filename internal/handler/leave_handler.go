@@ -264,12 +264,18 @@ func (h *LeaveHandler) GetLeaveDetail(c *gin.Context) {
 		finalStatus = "overdue"
 	}
 
+    scheme := "http"
+    if c.Request.TLS != nil {
+        scheme = "https"
+    }
+    baseURL := fmt.Sprintf("%s://%s/", scheme, c.Request.Host)
+
 	// 5. ปั้นข้อมูลไฟล์แนบ
 	var evidenceFiles []map[string]interface{}
 	for _, att := range attachments {
 		evidenceFiles = append(evidenceFiles, map[string]interface{}{
 			"file-name": att.OriginalName,
-			"file-url":  att.FilePath, // อนาคตอาจจะเอา Domain มาต่อหน้า FilePath ตรงนี้
+			"file-url":  baseURL + att.FilePath, // อนาคตอาจจะเอา Domain มาต่อหน้า FilePath ตรงนี้
 			"file-type": att.FileType,
 			"file-size": att.FileSize,
 		})
@@ -346,7 +352,7 @@ func (h *LeaveHandler) ResendLeaveRequest(c *gin.Context) {
 	if len(oldFiles) == 0 {
 		oldFiles = c.PostFormArray("old-files[]") // ดักเผื่อ Dio เติม [] มาให้
 	}
-    
+
 	// ตัดคำว่า "LEV" ออกแล้วแปลงเป็นตัวเลข (เช่น LEV000000000012 -> 12)
 	idStr := strings.TrimPrefix(reqIDStr, "LEV")
 	leaveID, err := strconv.Atoi(idStr)
