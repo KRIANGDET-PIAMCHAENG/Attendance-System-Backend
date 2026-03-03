@@ -1,16 +1,16 @@
 package handler
 
 import (
-    "fmt"
-	"net/http"
-	"path/filepath"
-	"time"
-    "strconv"
-	"my-app/internal/repository"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"my-app/internal/repository"
+	"net/http"
 	"os"
-    "strings"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 )
 
 type LeaveHandler struct {
@@ -20,7 +20,6 @@ type LeaveHandler struct {
 func NewLeaveHandler(repo *repository.UserRepo) *LeaveHandler {
 	return &LeaveHandler{repo: repo}
 }
-
 
 func (h *LeaveHandler) CreateLeaveRequest(c *gin.Context) {
 	var req repository.CreateLeaveRequest
@@ -34,9 +33,8 @@ func (h *LeaveHandler) CreateLeaveRequest(c *gin.Context) {
 	// 2. ดึง User ID ออกมาจาก Context (JWT)
 	userID := c.MustGet("user_id").(string)
 
-
-    // check ่ว่า overlap ไหม
-    isOverlap, err := h.repo.CheckOverlappingLeave(userID, req.DateFrom, req.DateTo)
+	// check ่ว่า overlap ไหม
+	isOverlap, err := h.repo.CheckOverlappingLeave(userID, req.DateFrom, req.DateTo)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบวันที่ไม่ถูกต้อง หรือระบบขัดข้อง", "details": err.Error()})
 		return
@@ -78,42 +76,42 @@ func (h *LeaveHandler) CreateLeaveRequest(c *gin.Context) {
 	}
 
 	// ==========================================
-    // 📂 5. จัดการไฟล์แนบ (Files Array)
-    // ==========================================
-    form, err := c.MultipartForm()
+	// 📂 5. จัดการไฟล์แนบ (Files Array)
+	// ==========================================
+	form, err := c.MultipartForm()
 
-    if err == nil && form != nil {
-        files := form.File["files"]
+	if err == nil && form != nil {
+		files := form.File["files"]
 
-        for _, file := range files {
-            ext := filepath.Ext(file.Filename)
-            newFileName := uuid.New().String() + ext
+		for _, file := range files {
+			ext := filepath.Ext(file.Filename)
+			newFileName := uuid.New().String() + ext
 
-            // 🌟 1. ดึงชนิดไฟล์ (ตัดจุด . ออกให้เหลือแค่ pdf, jpg)
-            fileType := strings.TrimPrefix(ext, ".")
-            
-            // 🌟 2. ดึงขนาดไฟล์จริง (ของแท้ 100% จาก multipart)
-            fileSize := file.Size 
+			// 🌟 1. ดึงชนิดไฟล์ (ตัดจุด . ออกให้เหลือแค่ pdf, jpg)
+			fileType := strings.TrimPrefix(ext, ".")
 
-            uploadDir := "uploads/leave_requests/" + time.Now().Format("2006/01")
-            if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
-                continue
-            }
+			// 🌟 2. ดึงขนาดไฟล์จริง (ของแท้ 100% จาก multipart)
+			fileSize := file.Size
 
-            dst := filepath.Join(uploadDir, newFileName)
+			uploadDir := "uploads/leave_requests/" + time.Now().Format("2006/01")
+			if err := os.MkdirAll(uploadDir, os.ModePerm); err != nil {
+				continue
+			}
 
-            if err := c.SaveUploadedFile(file, dst); err != nil {
-                continue
-            }
+			dst := filepath.Join(uploadDir, newFileName)
 
-            // 🌟 3. อัปเดตการเรียกใช้ Repo โดยส่ง fileType และ fileSize พ่วงไปด้วย
-            h.repo.SaveLeaveAttachment(leaveID, dst, file.Filename, fileType, fileSize)
-        }
-    }
+			if err := c.SaveUploadedFile(file, dst); err != nil {
+				continue
+			}
+
+			// 🌟 3. อัปเดตการเรียกใช้ Repo โดยส่ง fileType และ fileSize พ่วงไปด้วย
+			h.repo.SaveLeaveAttachment(leaveID, dst, file.Filename, fileType, fileSize)
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		// ใช้ fmt.Sprintf เพื่อเติม LEV และ 0 ให้ครบ 12 หลักตามสเปคเป๊ะๆ
-		"request-id": fmt.Sprintf("LEV%012d", leaveID), 
+		"request-id": fmt.Sprintf("LEV%012d", leaveID),
 	})
 }
 
@@ -154,8 +152,8 @@ func (h *LeaveHandler) GetPendingLeaves(c *gin.Context) {
 
 func (h *LeaveHandler) GetRecentLeaves(c *gin.Context) {
 	userID := c.MustGet("user_id").(string)
-	
-	startDate := c.Query("startDate") 
+
+	startDate := c.Query("startDate")
 	endDate := c.Query("endDate")
 
 	records, err := h.repo.GetRecentLeaves(userID, startDate, endDate)
@@ -215,7 +213,7 @@ func (h *LeaveHandler) GetLeaveFilterRange(c *gin.Context) {
 		now := time.Now().In(loc) // 🌟 อิงปีจากเวลาไทย
 		start := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, loc)
 		end := time.Date(now.Year(), 12, 31, 23, 59, 59, 0, loc)
-		
+
 		c.JSON(http.StatusOK, gin.H{
 			"start": start.Format("2006-01-02T15:04:05.000+07:00"),
 			"end":   end.Format("2006-01-02T15:04:05.000+07:00"),
@@ -339,12 +337,16 @@ func (h *LeaveHandler) ResendLeaveRequest(c *gin.Context) {
 	// 1. ดึง User ID
 	userID := c.MustGet("user_id").(string)
 
-	// 2. รับค่าจาก Text Form
+	// รับค่าจาก Text Form
 	reqIDStr := c.PostForm("request-id")
 	remark := c.PostForm("remark")
-	// 🌟 ทริค: Frontend ต้องส่ง Array มาในชื่อ "old-files" หรือ "old-files[]"
-	oldFiles := c.PostFormArray("old-files") 
 
+	// 🌟 แก้ตรงนี้: เช็คทั้งแบบมีและไม่มี []
+	oldFiles := c.PostFormArray("old-files")
+	if len(oldFiles) == 0 {
+		oldFiles = c.PostFormArray("old-files[]") // ดักเผื่อ Dio เติม [] มาให้
+	}
+    
 	// ตัดคำว่า "LEV" ออกแล้วแปลงเป็นตัวเลข (เช่น LEV000000000012 -> 12)
 	idStr := strings.TrimPrefix(reqIDStr, "LEV")
 	leaveID, err := strconv.Atoi(idStr)

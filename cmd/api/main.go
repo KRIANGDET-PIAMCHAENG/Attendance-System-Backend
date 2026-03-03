@@ -121,7 +121,7 @@ func main() {
 
 		leave_request := api.Group("/leave_request")
 		{
-			leave_request.POST("/create", leaveHdl.CreateLeaveRequest) // /api/leave_request/create
+			leave_request.POST("/create", leaveHdl.CreateLeaveRequest) 
 			leave_request.GET("/leave_info", leaveHdl.GetLeaveInfo)
 
 			leave_request.PUT("/resend", leaveHdl.ResendLeaveRequest)

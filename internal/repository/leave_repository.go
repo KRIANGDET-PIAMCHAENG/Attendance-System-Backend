@@ -2,15 +2,15 @@ package repository
 
 import (
 	"errors"
-	"time"
-	"os"
 	"gorm.io/gorm"
+	"os"
+	"time"
 )
 
 type CreateLeaveRequest struct {
 	LeaveType       string `form:"leave-type" binding:"required"`
-	DateFrom        string `form:"date-from" binding:"required"` 
-	DateTo          string `form:"date-to" binding:"required"`   
+	DateFrom        string `form:"date-from" binding:"required"`
+	DateTo          string `form:"date-to" binding:"required"`
 	FromDateMorning bool   `form:"from-date-morning"`
 	ToDateMorning   bool   `form:"to-date-morning"`
 	Remark          string `form:"remark"`
@@ -66,21 +66,21 @@ func (r *UserRepo) SaveLeaveRequest(userID string, req CreateLeaveRequest, signa
 }
 
 func (r *UserRepo) SaveLeaveAttachment(leaveID int, filePath string, fileName string, fileType string, fileSize int64) error {
-    
-    // 🌟 อัปเดตคำสั่ง SQL ให้ INSERT คอลัมน์ใหม่ลงไปด้วย
-    sql := `
+
+	// 🌟 อัปเดตคำสั่ง SQL ให้ INSERT คอลัมน์ใหม่ลงไปด้วย
+	sql := `
 		INSERT INTO leave_attachments (
 			leave_request_id, file_path, original_name, file_type, file_size
 		) 
 		VALUES ($1, $2, $3, $4, $5)
 	`
 
-    // 🌟 ส่งตัวแปร 5 ตัวเข้าไปให้ครบ
-    if err := r.db.Exec(sql, leaveID, filePath, fileName, fileType, fileSize).Error; err != nil {
-        return err
-    }
+	// 🌟 ส่งตัวแปร 5 ตัวเข้าไปให้ครบ
+	if err := r.db.Exec(sql, leaveID, filePath, fileName, fileType, fileSize).Error; err != nil {
+		return err
+	}
 
-    return nil
+	return nil
 }
 
 // ตรวจสอบว่ามีใบลาที่ซ้อนทับกันอยู่หรือไม่
@@ -106,7 +106,7 @@ func (r *UserRepo) CheckOverlappingLeave(userID string, startDate string, endDat
 		  AND date_from <= $2 
 		  AND date_to >= $3
 	`
-	
+
 	// สังเกตการส่ง Parameter: $2 คือ reqEnd, $3 คือ reqStart
 	if err := r.db.Raw(sql, userID, reqEnd, reqStart).Scan(&count).Error; err != nil {
 		return false, err
@@ -122,20 +122,20 @@ func (r *UserRepo) GetPendingLeaves(userID string) ([]LeaveStatusRecord, error) 
 			FROM leave_requests 
 			WHERE user_id = $1 AND status = 'pending' 
 			ORDER BY date_from DESC`
-	
+
 	err := r.db.Raw(sql, userID).Scan(&leaves).Error
 	return leaves, err
 }
 
 func (r *UserRepo) GetRecentLeaves(userID string, startDate string, endDate string) ([]LeaveStatusRecord, error) {
 	var leaves []LeaveStatusRecord
-	
+
 	// Query: ดึงรายการที่ (ไม่ใช่ pending) OR (เป็น pending แต่เลยกำหนดวันลาแล้ว)
 	query := `SELECT id, leave_type, date_from, status 
 			  FROM leave_requests 
 			  WHERE user_id = ? 
 			    AND (status != 'pending' OR (status = 'pending' AND date_from < CURRENT_TIMESTAMP))`
-	
+
 	args := []interface{}{userID}
 
 	if startDate != "" {
@@ -158,16 +158,15 @@ func (r *UserRepo) GetLeaveFilterRange(userID string) (*time.Time, *time.Time, e
 		MinDate *time.Time `gorm:"column:min_date"`
 		MaxDate *time.Time `gorm:"column:max_date"`
 	}
-	
+
 	// หาค่าที่ต่ำสุดและสูงสุดจาก date_from ของยูสเซอร์คนนั้น
 	sql := `SELECT MIN(date_from) as min_date, MAX(date_from) as max_date 
 			FROM leave_requests 
 			WHERE user_id = $1`
-			
+
 	err := r.db.Raw(sql, userID).Scan(&result).Error
 	return result.MinDate, result.MaxDate, err
 }
-
 
 // 1. สร้าง Struct มารับข้อมูล
 type LeaveDetailRecord struct {
@@ -181,23 +180,23 @@ type LeaveDetailRecord struct {
 	CreatedAt       time.Time
 	Status          string
 	// ฟิลด์จากตาราง leave_approvals (ใช้ Pointer เผื่อยังไม่มีคนมาอนุมัติ จะได้เป็น nil ได้)
-	Approver        *string
-	ApproveRole     *string
-	ApproveReason   *string
-	ApproveDate     *time.Time
+	Approver      *string
+	ApproveRole   *string
+	ApproveReason *string
+	ApproveDate   *time.Time
 }
 
 type LeaveAttachmentRecord struct {
-    OriginalName string `gorm:"column:original_name"`
-    FilePath     string `gorm:"column:file_path"`
-    FileType     string `gorm:"column:file_type"` // เพิ่ม tag
-    FileSize     int64  `gorm:"column:file_size"` // เพิ่ม tag
+	OriginalName string `gorm:"column:original_name"`
+	FilePath     string `gorm:"column:file_path"`
+	FileType     string `gorm:"column:file_type"` // เพิ่ม tag
+	FileSize     int64  `gorm:"column:file_size"` // เพิ่ม tag
 }
 
 // 2. ฟังก์ชัน GetLeaveDetail (ใช้ LEFT JOIN)
 func (r *UserRepo) GetLeaveDetail(userID string, leaveID int) (*LeaveDetailRecord, []LeaveAttachmentRecord, error) {
 	var detail LeaveDetailRecord
-	
+
 	// ดึงข้อมูลใบลาหลัก พร้อมข้อมูลผู้อนุมัติล่าสุด (ถ้ามี)
 	err := r.db.Table("leave_requests lr").
 		Select(`
@@ -220,9 +219,9 @@ func (r *UserRepo) GetLeaveDetail(userID string, leaveID int) (*LeaveDetailRecor
 	// ดึงข้อมูลไฟล์แนบ (หมายเหตุ: ถ้าตาราง leave_attachments ของคุณไม่มีฟิลด์ file_size หรือ file_type ให้ลบออกจาก Select ตรงนี้ด้วยนะครับ)
 	var attachments []LeaveAttachmentRecord
 	r.db.Table("leave_attachments").
-        Select("original_name, file_path, file_type, file_size"). // ✅ เพิ่ม 2 คอลัมน์นี้เข้าไป
-        Where("leave_request_id = ?", leaveID).
-        Find(&attachments)
+		Select("original_name, file_path, file_type, file_size"). // ✅ เพิ่ม 2 คอลัมน์นี้เข้าไป
+		Where("leave_request_id = ?", leaveID).
+		Find(&attachments)
 
 	return &detail, attachments, nil
 }
@@ -257,7 +256,7 @@ func (r *UserRepo) GetLeaveBalanceInfo(userID string, leaveTypeStr string) (floa
 	if err != nil {
 		// ถ้าหาไม่เจอ (เช่น เพิ่งขึ้นปีงบประมาณใหม่ แต่ระบบยังไม่ได้รันโควต้าให้)
 		// เราสามารถ Return 0, 0 ไปก่อนเพื่อไม่ให้แอปฝั่ง Frontend พังครับ
-		return 0, 0, nil 
+		return 0, 0, nil
 	}
 
 	return balance.DaysUsed, balance.DaysAllowed, nil
@@ -272,59 +271,71 @@ type NewAttachment struct {
 }
 
 func (r *UserRepo) ResendLeaveRequest(userID string, leaveID int, remark string, oldFiles []string, signaturePath *string, newFiles []NewAttachment) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		// 1. อัปเดตข้อมูลใบลาหลัก (รีเซ็ตสถานะเป็น pending)
-		updates := map[string]interface{}{
-			"status": "pending",
-			"remark": remark,
-		}
-		if signaturePath != nil {
-			updates["signature_path"] = *signaturePath
-		}
+    return r.db.Transaction(func(tx *gorm.DB) error {
+        // ==========================================
+        // 1. อัปเดตข้อมูลใบลาหลัก (รีเซ็ตสถานะเป็น pending)
+        // ==========================================
+        updates := map[string]interface{}{
+            "status": "pending",
+            "remark": remark,
+        }
+        if signaturePath != nil {
+            updates["signature_path"] = *signaturePath
+        }
 
-		if err := tx.Table("leave_requests").
-			Where("id = ? AND user_id = ?", leaveID, userID).
-			Updates(updates).Error; err != nil {
-			return err
-		}
+        if err := tx.Table("leave_requests").
+            Where("id = ? AND user_id = ?", leaveID, userID).
+            Updates(updates).Error; err != nil {
+            return err
+        }
 
-		// 2. จัดการไฟล์เก่า (หาไฟล์ที่ต้อง "ลบทิ้ง")
-		var filesToDelete []string
-		query := tx.Table("leave_attachments").Where("leave_request_id = ?", leaveID)
-		
-		// ถ้ามีไฟล์เก่าที่ต้องการเก็บไว้ ให้หาไฟล์ที่ชื่อ "ไม่อยู่" ในลิสต์นั้น
-		if len(oldFiles) > 0 {
-			query = query.Where("original_name NOT IN ?", oldFiles)
-		}
+        // ==========================================
+        // 2. จัดการไฟล์เก่า (หาไฟล์ที่ต้อง "ลบทิ้ง")
+        // ==========================================
+        var filesToDelete []string
 
-		// ดึง path ของไฟล์ที่กำลังจะโดนลบออกมาเก็บไว้ก่อน เพื่อไปลบออกจาก Harddisk
-		if err := query.Pluck("file_path", &filesToDelete).Error; err != nil {
-			return err
-		}
+        // สร้าง Query สำหรับค้นหา (Find)
+        findQuery := tx.Table("leave_attachments").Where("leave_request_id = ?", leaveID)
+        
+        // ถ้า Frontend ส่งชื่อไฟล์เก่าที่ "อยากเก็บไว้" มา ให้หาไฟล์ที่ "ไม่ได้อยู่ในลิสต์นี้" เพื่อเอาไปลบทิ้ง
+        if len(oldFiles) > 0 {
+            findQuery = findQuery.Where("original_name NOT IN ?", oldFiles)
+        }
+        // (แต่ถ้า oldFiles ว่างเปล่า = User กดลบไฟล์เดิมทิ้งหมด findQuery จะกวาดไฟล์ของใบลาใบนี้มาทั้งหมดตามปกติ)
 
-		// ลบข้อมูลไฟล์ออกจาก Database
-		if err := query.Delete(nil).Error; err != nil {
-			return err
-		}
+        // ดึง path ของไฟล์ที่กำลังจะโดนลบออกมา (เพื่อเอาไปลบไฟล์จริง และเป็นเงื่อนไขลบใน DB)
+        if err := findQuery.Pluck("file_path", &filesToDelete).Error; err != nil {
+            return err
+        }
 
-		// 🗑️ ลบไฟล์จริงออกจาก Server (Best Effort: ลบได้ก็ลบ ลบไม่ได้ไม่เป็นไร ไม่ให้กระทบ DB)
-		for _, path := range filesToDelete {
-			_ = os.Remove(path)
-		}
+        // 🌟 ท่าไม้ตายที่ชัวร์ที่สุด: ถ้ามีไฟล์ต้องลบ ให้ใช้ Exec (Raw SQL) สั่ง Delete เลย
+        if len(filesToDelete) > 0 {
+            // ลบออกจาก Database
+            if err := tx.Exec("DELETE FROM leave_attachments WHERE file_path IN ?", filesToDelete).Error; err != nil {
+                return err
+            }
 
-		// 3. เพิ่มไฟล์ใหม่ (ถ้ามี) ลง Database
-		for _, att := range newFiles {
-			if err := tx.Table("leave_attachments").Create(map[string]interface{}{
-				"leave_request_id": leaveID,
-				"file_path":        att.FilePath,
-				"original_name":    att.OriginalName,
-				"file_type":        att.FileType,
-				"file_size":        att.FileSize,
-			}).Error; err != nil {
-				return err
-			}
-		}
+            // 🗑️ ลบไฟล์จริงออกจาก Server (Best Effort)
+            for _, path := range filesToDelete {
+                _ = os.Remove(path) 
+            }
+        }
 
-		return nil
-	})
+        // ==========================================
+        // 3. เพิ่มไฟล์ใหม่ (ถ้ามี) ลง Database
+        // ==========================================
+        for _, att := range newFiles {
+            if err := tx.Table("leave_attachments").Create(map[string]interface{}{
+                "leave_request_id": leaveID,
+                "file_path":        att.FilePath,
+                "original_name":    att.OriginalName,
+                "file_type":        att.FileType,
+                "file_size":        att.FileSize,
+            }).Error; err != nil {
+                return err
+            }
+        }
+
+        return nil // จบ Transaction แบบสมบูรณ์!
+    })
 }
