@@ -80,7 +80,12 @@ func (h *AttendanceReqHandler) CreateTimeRequest(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "success"})
+	reqIDStr := fmt.Sprintf("REQ%011d", req.ID)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "success",
+		"id":      reqIDStr, // ส่งรหัสกลับไปให้ Flutter
+	})
 }
 
 // 2. Get Pending
