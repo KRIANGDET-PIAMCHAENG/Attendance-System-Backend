@@ -86,13 +86,30 @@ func (r *UserRepo) GetAttendanceFilterRange(userID string) (time.Time, time.Time
 	return result.MinDate, result.MaxDate, nil
 }
 
-// 5. ดึงรายละเอียดคำขอ (พร้อมไฟล์แนบ)
-func (r *UserRepo) GetAttendanceDetail(userID string, reqID int) (*AttendanceRequest, error) {
+// 5. ดึงรายละเอียดคำขอ (พร้อมไฟล์แนบ + ข้อมูลผู้อนุมัติ)
+func (r *UserRepo) GetAttendanceDetail(userID string, reqID int) (*AttendanceRequest, string, error) {
 	var request AttendanceRequest
-	err := r.db.Preload("Attachments").
+	// ใช้ Preload ดึงทั้ง Attachments และ Approval มาพร้อมกัน
+	err := r.db.Preload("Attachments").Preload("Approval").
 		Where("id = ? AND user_id = ?", reqID, userID).
 		First(&request).Error
-	return &request, err
+
+	if err != nil {
+		return nil, "", err
+	}
+
+	// ค้นหาชื่อผู้อนุมัติ (ถ้ามีคนอนุมัติแล้ว)
+	var approverName string
+	if request.Approval != nil && request.Approval.ApproverID != "" {
+		// ⚠️ หมายเหตุ: ปรับโค้ดใน Select ให้ตรงกับชื่อคอลัมน์ในตาราง user_info ของคุณ (เช่น first_name, last_name)
+		r.db.Table("user_info").
+			Select("first_name || ' ' || last_name"). 
+			Where("user_id = ?", request.Approval.ApproverID).
+			Scan(&approverName)
+	}
+
+	// คืนค่ากลับไป 3 อย่าง: ข้อมูลใบลา, ชื่อคนอนุมัติ, และ error
+	return &request, approverName, nil
 }
 
 // 6. ยกเลิกคำขอ (Soft Delete - เปลี่ยนสถานะเป็น canceled)

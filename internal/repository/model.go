@@ -2,21 +2,33 @@ package repository
 
 import "time"
 
-// Model สำหรับ Database
+// 🌟 1. สร้าง Struct ใหม่สำหรับตาราง Approvals
+type AttendanceApproval struct {
+	ID                  uint      `gorm:"primaryKey"`
+	AttendanceRequestID uint      `gorm:"column:attendance_request_id"`
+	ApproverID          string    `gorm:"column:approver_id"`
+	ApproveRole         string    `gorm:"column:approve_role"`
+	Status              string    `gorm:"column:status"`
+	Reason              string    `gorm:"column:reason"`
+	CreatedAt           time.Time `gorm:"column:created_at"`
+}
+
+// 🌟 2. อัปเดต Model ตัวเดิม ให้รู้จัก Approval
 type AttendanceRequest struct {
-    ID            uint      `gorm:"primaryKey"`
-    UserID        string    `gorm:"column:user_id"`
-    DateFrom      time.Time `gorm:"column:date_from"`
-    DateTo        time.Time `gorm:"column:date_to"`
-    StartTime     string    `gorm:"column:start_time"` 
-    EndTime       string    `gorm:"column:end_time"`
-    Remark        string    `gorm:"column:remark"`
-    SignaturePath string    `gorm:"column:signature_path"`
-    Status        string    `gorm:"column:status;default:pending"`
-    CreatedAt     time.Time `gorm:"column:created_at"`
-    
-    // Relation ไปหาตารางลูก (ไฟล์แนบ)
-    Attachments []AttendanceRequestAttachment `gorm:"foreignKey:AttendanceRequestID"`
+	ID            uint      `gorm:"primaryKey"`
+	UserID        string    `gorm:"column:user_id"`
+	DateFrom      time.Time `gorm:"column:date_from"`
+	DateTo        time.Time `gorm:"column:date_to"`
+	StartTime     string    `gorm:"column:start_time"`
+	EndTime       string    `gorm:"column:end_time"`
+	Remark        string    `gorm:"column:remark"`
+	SignaturePath string    `gorm:"column:signature_path"`
+	Status        string    `gorm:"column:status;default:pending"`
+	CreatedAt     time.Time `gorm:"column:created_at"`
+
+	Attachments []AttendanceRequestAttachment `gorm:"foreignKey:AttendanceRequestID"`
+	// เพิ่มบรรทัดนี้ลงไป (HasOne Relation)
+	Approval    *AttendanceApproval           `gorm:"foreignKey:AttendanceRequestID"`
 }
 
 type AttendanceRequestAttachment struct {

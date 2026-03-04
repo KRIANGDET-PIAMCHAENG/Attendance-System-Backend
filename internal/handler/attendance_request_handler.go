@@ -170,12 +170,10 @@ func getBaseURL(c *gin.Context) string {
 	return fmt.Sprintf("%s://%s/", scheme, c.Request.Host)
 }
 
-// 5. Get Detail (รับค่าจาก Query: ?id=REQ...)
 func (h *AttendanceReqHandler) GetAttendanceDetail(c *gin.Context) {
 	userID := c.MustGet("user_id").(string)
 	reqIDStr := c.Query("id")
 
-	// ตัดคำว่า REQ ออกแล้วแปลงเป็นตัวเลข
 	idStr := strings.TrimPrefix(reqIDStr, "REQ")
 	reqID, err := strconv.Atoi(idStr)
 	if err != nil || reqID == 0 {
@@ -183,7 +181,8 @@ func (h *AttendanceReqHandler) GetAttendanceDetail(c *gin.Context) {
 		return
 	}
 
-	request, err := h.repo.GetAttendanceDetail(userID, reqID)
+	// 🌟 รับค่า approverName เพิ่มมาด้วย
+	request, approverName, err := h.repo.GetAttendanceDetail(userID, reqID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ดึงข้อมูลไม่สำเร็จ"})
 		return
@@ -200,18 +199,38 @@ func (h *AttendanceReqHandler) GetAttendanceDetail(c *gin.Context) {
 		})
 	}
 
+	// 🌟 จัดโครงสร้างส่วน approve-detail
+	approveDetail := map[string]interface{}{
+		"status": request.Status, // ดึงสถานะปัจจุบันมาแสดงเสมอ (pending, approved, rejected)
+	}
+
+	if request.Approval != nil {
+		// ถ้ามีประวัติการอนุมัติแล้ว ให้เติมข้อมูลลงไป
+		approveDetail["approve-role"] = request.Approval.ApproveRole
+		approveDetail["approver"] = approverName
+		approveDetail["reason"] = request.Approval.Reason
+		approveDetail["approve-date"] = request.Approval.CreatedAt.Format(time.RFC3339)
+	} else {
+		// ถ้ายังไม่มี (เช่น กำลัง pending) ให้เป็นค่าว่างไปก่อน
+		approveDetail["approve-role"] = ""
+		approveDetail["approver"] = ""
+		approveDetail["reason"] = ""
+		approveDetail["approve-date"] = ""
+	}
+
+	// 🌟 จัดโครงสร้าง JSON ขั้นสุดท้ายให้เหมือน Frontend แบบเป๊ะๆ
 	c.JSON(http.StatusOK, gin.H{
 		"request-detail": map[string]interface{}{
-			"id":             fmt.Sprintf("REQ%011d", request.ID),
 			"date-from":      request.DateFrom.Format(time.RFC3339),
 			"date-to":        request.DateTo.Format(time.RFC3339),
-			"start-time":     request.StartTime,
-			"end-time":       request.EndTime,
+			"time-start":     request.StartTime, // แก้ชื่อคีย์แล้ว
+			"time-end":       request.EndTime,   // แก้ชื่อคีย์แล้ว
 			"remark":         request.Remark,
-			"signature-url":  baseURL + request.SignaturePath,
 			"evidence-files": evidenceFiles,
-			"status":         request.Status,
+			// "request-date":   request.CreatedAt.Format(time.RFC3339), // เพิ่ม request-date แล้ว
+			// "signature-url": baseURL + request.SignaturePath, // ถ้า Frontend ไม่ได้ใช้ ก็เอาออกได้ครับ หรือจะใส่ไว้เผื่อก็ได้
 		},
+		"approve-detail": approveDetail,
 	})
 }
 
