@@ -1,7 +1,8 @@
 package repository
 
 import (
-	//"errors"
+	"os"
+	"errors"
 	"gorm.io/gorm"
 	"time"
 )
@@ -83,4 +84,88 @@ func (r *UserRepo) GetAttendanceFilterRange(userID string) (time.Time, time.Time
 		return time.Date(now.Year(), 1, 1, 0, 0, 0, 0, time.UTC), time.Date(now.Year(), 12, 31, 0, 0, 0, 0, time.UTC), nil
 	}
 	return result.MinDate, result.MaxDate, nil
+}
+
+// 5. ดึงรายละเอียดคำขอ (พร้อมไฟล์แนบ)
+func (r *UserRepo) GetAttendanceDetail(userID string, reqID int) (*AttendanceRequest, error) {
+	var request AttendanceRequest
+	err := r.db.Preload("Attachments").
+		Where("id = ? AND user_id = ?", reqID, userID).
+		First(&request).Error
+	return &request, err
+}
+
+// 6. ยกเลิกคำขอ (Soft Delete - เปลี่ยนสถานะเป็น canceled)
+func (r *UserRepo) DeleteAttendanceRequest(userID string, reqID int) error {
+	result := r.db.Table("attendance_requests").
+		Where("id = ? AND user_id = ?", reqID, userID).
+		Update("status", "canceled")
+
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("ไม่พบคำขอดังกล่าว หรือคุณไม่มีสิทธิ์")
+	}
+	return nil
+}
+
+// 7. ยื่นคำขอใหม่ (Resend)
+func (r *UserRepo) ResendAttendanceRequest(userID string, reqID int, remark string, oldFiles []string, signaturePath *string, newFiles []NewAttendanceAttachment) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 7.1 อัปเดตข้อมูลหลักให้กลับเป็น pending
+		updates := map[string]interface{}{
+			"status": "pending",
+			"remark": remark,
+		}
+		if signaturePath != nil {
+			updates["signature_path"] = *signaturePath
+		}
+
+		if err := tx.Table("attendance_requests").
+			Where("id = ? AND user_id = ?", reqID, userID).
+			Updates(updates).Error; err != nil {
+			return err
+		}
+
+		// 7.2 จัดการลบไฟล์แนบเก่าที่ถูกกากบาททิ้ง
+		var filesToDelete []string
+		findQuery := tx.Table("attendance_request_attachments").Where("attendance_request_id = ?", reqID)
+		if len(oldFiles) > 0 {
+			findQuery = findQuery.Where("original_name NOT IN ?", oldFiles)
+		}
+		
+		if err := findQuery.Pluck("file_path", &filesToDelete).Error; err != nil {
+			return err
+		}
+
+		if len(filesToDelete) > 0 {
+			if err := tx.Exec("DELETE FROM attendance_request_attachments WHERE file_path IN ?", filesToDelete).Error; err != nil {
+				return err
+			}
+			for _, path := range filesToDelete {
+				_ = os.Remove(path) // ลบไฟล์จริงออกจาก Harddisk
+			}
+		} else if len(oldFiles) == 0 {
+			// ถ้าเก่าก็ลบหมด
+			if err := tx.Exec("DELETE FROM attendance_request_attachments WHERE attendance_request_id = ?", reqID).Error; err != nil {
+				return err
+			}
+		}
+
+		// 7.3 เพิ่มไฟล์แนบใหม่ลง DB
+		for _, att := range newFiles {
+			if err := tx.Table("attendance_request_attachments").Create(map[string]interface{}{
+				"attendance_request_id": reqID,
+				"file_path":             att.FilePath,
+				"original_name":         att.OriginalName,
+				"file_type":             att.FileType,
+				"file_size":             att.FileSize,
+			}).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }

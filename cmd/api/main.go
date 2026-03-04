@@ -155,6 +155,11 @@ func main() {
 			attendance_req.GET("/pending", attendanceReqHdl.GetPendingRequests)
 			attendance_req.GET("/recent", attendanceReqHdl.GetRecentRequests)
 			attendance_req.GET("/filter_range", attendanceReqHdl.GetFilterRange)
+
+
+			attendance_req.GET("/detail", attendanceReqHdl.GetAttendanceDetail)
+            attendance_req.DELETE("/delete", attendanceReqHdl.DeleteAttendanceRequest)
+            attendance_req.PUT("/resend", attendanceReqHdl.ResendAttendanceRequest)
 		}
 
 	}

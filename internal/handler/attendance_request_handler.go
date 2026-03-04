@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
+	"strconv"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"my-app/internal/repository" // เปลี่ยนเป็น path โปรเจกต์คุณ
@@ -153,4 +153,148 @@ func (h *AttendanceReqHandler) GetFilterRange(c *gin.Context) {
 		"start": minDate.Format(time.RFC3339),
 		"end":   maxDate.Format(time.RFC3339),
 	})
+}
+
+
+// Helper Function เอาไว้ดึง BaseURL (ใช้ใน Detail)
+func getBaseURL(c *gin.Context) string {
+	scheme := "http"
+	if c.Request.TLS != nil {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s/", scheme, c.Request.Host)
+}
+
+// 5. Get Detail (รับค่าจาก Query: ?id=REQ...)
+func (h *AttendanceReqHandler) GetAttendanceDetail(c *gin.Context) {
+	userID := c.MustGet("user_id").(string)
+	reqIDStr := c.Query("id")
+
+	// ตัดคำว่า REQ ออกแล้วแปลงเป็นตัวเลข
+	idStr := strings.TrimPrefix(reqIDStr, "REQ")
+	reqID, err := strconv.Atoi(idStr)
+	if err != nil || reqID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID ไม่ถูกต้อง"})
+		return
+	}
+
+	request, err := h.repo.GetAttendanceDetail(userID, reqID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ดึงข้อมูลไม่สำเร็จ"})
+		return
+	}
+
+	baseURL := getBaseURL(c)
+	var evidenceFiles []map[string]interface{}
+	for _, file := range request.Attachments {
+		evidenceFiles = append(evidenceFiles, map[string]interface{}{
+			"file-name": file.OriginalName,
+			"file-size": file.FileSize,
+			"file-type": file.FileType,
+			"file-url":  baseURL + file.FilePath,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"request-detail": map[string]interface{}{
+			"id":             fmt.Sprintf("REQ%011d", request.ID),
+			"date-from":      request.DateFrom.Format(time.RFC3339),
+			"date-to":        request.DateTo.Format(time.RFC3339),
+			"start-time":     request.StartTime,
+			"end-time":       request.EndTime,
+			"remark":         request.Remark,
+			"signature-url":  baseURL + request.SignaturePath,
+			"evidence-files": evidenceFiles,
+			"status":         request.Status,
+		},
+	})
+}
+
+// 6. Delete Request (รับค่าจาก JSON Body: {"id": "REQ..."})
+func (h *AttendanceReqHandler) DeleteAttendanceRequest(c *gin.Context) {
+	userID := c.MustGet("user_id").(string)
+	var req struct {
+		ID string `json:"id"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil || req.ID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูล Body ไม่ถูกต้อง"})
+		return
+	}
+
+	idStr := strings.TrimPrefix(req.ID, "REQ")
+	reqID, err := strconv.Atoi(idStr)
+	if err != nil || reqID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID ไม่ถูกต้อง"})
+		return
+	}
+
+	if err := h.repo.DeleteAttendanceRequest(userID, reqID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "ยกเลิกคำขอสำเร็จ"})
+}
+
+// 7. Resend Request (รับเป็น Multipart Form-Data)
+func (h *AttendanceReqHandler) ResendAttendanceRequest(c *gin.Context) {
+	userID := c.MustGet("user_id").(string)
+
+	reqIDStr := c.PostForm("id")
+	remark := c.PostForm("remark")
+
+	oldFiles := c.PostFormArray("old-files")
+	if len(oldFiles) == 0 {
+		oldFiles = c.PostFormArray("old-files[]") // ดักเคส Dio ชอบแอบเติม [] ให้
+	}
+
+	idStr := strings.TrimPrefix(reqIDStr, "REQ")
+	reqID, err := strconv.Atoi(idStr)
+	if err != nil || reqID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID ไม่ถูกต้อง"})
+		return
+	}
+
+	// 7.1 จัดการไฟล์ลายเซ็นใหม่ (ถ้ามี)
+	var signaturePath *string
+	sigFile, err := c.FormFile("signature")
+	if err == nil && sigFile != nil {
+		uploadDir := "uploads/signatures/" + time.Now().Format("2006/01")
+		os.MkdirAll(uploadDir, os.ModePerm)
+		dst := filepath.Join(uploadDir, uuid.New().String()+filepath.Ext(sigFile.Filename))
+		if err := c.SaveUploadedFile(sigFile, dst); err == nil {
+			signaturePath = &dst
+		}
+	}
+
+	// 7.2 จัดการไฟล์แนบใหม่ (ถ้ามี)
+	form, err := c.MultipartForm()
+	var newAttachments []repository.NewAttendanceAttachment
+	if err == nil && form != nil {
+		files := form.File["files"]
+		for _, file := range files {
+			ext := filepath.Ext(file.Filename)
+			uploadDir := "uploads/attendance_requests/" + time.Now().Format("2006/01")
+			os.MkdirAll(uploadDir, os.ModePerm)
+			dst := filepath.Join(uploadDir, uuid.New().String()+ext)
+
+			if err := c.SaveUploadedFile(file, dst); err == nil {
+				newAttachments = append(newAttachments, repository.NewAttendanceAttachment{
+					FilePath:     dst,
+					OriginalName: file.Filename,
+					FileType:     strings.TrimPrefix(ext, "."),
+					FileSize:     file.Size,
+				})
+			}
+		}
+	}
+
+	// 7.3 ส่งต่อให้ Repo
+	if err := h.repo.ResendAttendanceRequest(userID, reqID, remark, oldFiles, signaturePath, newAttachments); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "ส่งคำขอใหม่อีกครั้งสำเร็จ"})
 }
