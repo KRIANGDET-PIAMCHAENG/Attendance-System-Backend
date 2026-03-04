@@ -421,3 +421,38 @@ func (h *LeaveHandler) ResendLeaveRequest(c *gin.Context) {
 		"request-id": reqIDStr,
 	})
 }
+
+
+func (h *LeaveHandler) CancelLeaveRequest(c *gin.Context) {
+    // 1. ดึง User ID
+    userID := c.MustGet("user_id").(string)
+
+    // 2. รับค่า Request ID (รองรับทั้ง JSON Body และ Form-Data)
+    var req struct {
+        RequestID string `json:"request-id" form:"request-id"`
+    }
+    
+    if err := c.ShouldBind(&req); err != nil || req.RequestID == "" {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลไม่ถูกต้อง หรือไม่ได้ส่ง request-id"})
+        return
+    }
+
+    // 3. ตัดคำว่า "LEV" ออก
+    idStr := strings.TrimPrefix(req.RequestID, "LEV")
+    leaveID, err := strconv.Atoi(idStr)
+    if err != nil || leaveID == 0 {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ request-id ไม่ถูกต้อง"})
+        return
+    }
+
+    // 4. ส่งให้ Repository ลบข้อมูล
+    if err := h.repo.CancelLeaveRequest(userID, leaveID); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "ไม่สามารถยกเลิกใบลาได้", "details": err.Error()})
+        return
+    }
+
+    // 5. ส่งผลลัพธ์สำเร็จ
+    c.JSON(http.StatusOK, gin.H{
+        "message": "ยกเลิกใบลาและลบข้อมูลสำเร็จ",
+    })
+}

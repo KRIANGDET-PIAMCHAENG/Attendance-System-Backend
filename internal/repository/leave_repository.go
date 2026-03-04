@@ -339,3 +339,74 @@ func (r *UserRepo) ResendLeaveRequest(userID string, leaveID int, remark string,
         return nil // จบ Transaction แบบสมบูรณ์!
     })
 }
+
+
+func (r *UserRepo) CancelLeaveRequest(userID string, leaveID int) error {
+    return r.db.Transaction(func(tx *gorm.DB) error {
+        // ==========================================
+        // 1. ดึง Path ของไฟล์ทั้งหมด เพื่อเอาไปลบออกจาก Harddisk
+        // ==========================================
+        var filesToDelete []string
+
+        // 1.1 ดึง Path ของลายเซ็น (ถ้ามี)
+        var signaturePath string
+        // ใช้ Query เช็คด้วยว่าใบลาเป็นของ User คนนี้จริงๆ ป้องกันคนอื่นมาแอบลบ
+        err := tx.Table("leave_requests").
+            Select("signature_path").
+            Where("id = ? AND user_id = ?", leaveID, userID).
+            Scan(&signaturePath).Error
+        
+        if err != nil {
+            return err 
+        }
+
+        // เช็คว่าเจอใบลาไหม ถ้า scan แล้วว่างเปล่าแปลว่าไม่มีใบลาของคนๆ นี้
+        var count int64
+        tx.Table("leave_requests").Where("id = ? AND user_id = ?", leaveID, userID).Count(&count)
+        if count == 0 {
+            return errors.New("ไม่พบใบลาดังกล่าว หรือคุณไม่มีสิทธิ์ยกเลิกใบลาของผู้อื่น")
+        }
+
+        if signaturePath != "" {
+            filesToDelete = append(filesToDelete, signaturePath)
+        }
+
+        // 1.2 ดึง Path ของไฟล์แนบทั้งหมด (evidence files)
+        var attachPaths []string
+        if err := tx.Table("leave_attachments").
+            Where("leave_request_id = ?", leaveID).
+            Pluck("file_path", &attachPaths).Error; err == nil {
+            filesToDelete = append(filesToDelete, attachPaths...)
+        }
+
+        // ==========================================
+        // 2. ลบข้อมูลออกจาก Database (ลบจากตารางลูก ไปตารางแม่)
+        // ==========================================
+        
+        // 2.1 ลบไฟล์แนบ
+        if err := tx.Exec("DELETE FROM leave_attachments WHERE leave_request_id = ?", leaveID).Error; err != nil {
+            return err
+        }
+
+        // 2.2 ลบประวัติการอนุมัติ (ถ้ามี)
+        if err := tx.Exec("DELETE FROM leave_approvals WHERE leave_request_id = ?", leaveID).Error; err != nil {
+            return err
+        }
+
+        // 2.3 ลบใบลาหลัก (Request)
+        if err := tx.Exec("DELETE FROM leave_requests WHERE id = ? AND user_id = ?", leaveID, userID).Error; err != nil {
+            return err
+        }
+
+        // ==========================================
+        // 3. ลบไฟล์จริงออกจาก Harddisk (Server)
+        // ==========================================
+        for _, path := range filesToDelete {
+            if path != "" {
+                _ = os.Remove(path) // ใช้ Best effort ลบได้ก็ลบ ลบไม่ได้ไม่พัง
+            }
+        }
+
+        return nil // จบ Transaction แบบคลีนๆ
+    })
+}

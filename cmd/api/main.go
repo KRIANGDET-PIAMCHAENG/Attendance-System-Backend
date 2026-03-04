@@ -127,6 +127,8 @@ func main() {
 			leave_request.GET("/leave_info", leaveHdl.GetLeaveInfo)
 
 			leave_request.PUT("/resend", leaveHdl.ResendLeaveRequest)
+
+			leave_request.DELETE("/cancel", leaveHdl.CancelLeaveRequest)
 		}
 
 		leave_status := api.Group("/leave_status")
@@ -136,6 +138,8 @@ func main() {
 			leave_status.GET("/filter_range", leaveHdl.GetLeaveFilterRange)
 
 			leave_status.GET("/detail", leaveHdl.GetLeaveDetail)
+
+
 		}
 
 		signature := api.Group("/signature")
