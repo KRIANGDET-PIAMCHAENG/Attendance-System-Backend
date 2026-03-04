@@ -422,7 +422,6 @@ func (h *LeaveHandler) ResendLeaveRequest(c *gin.Context) {
 	})
 }
 
-
 func (h *LeaveHandler) CancelLeaveRequest(c *gin.Context) {
     // 1. ดึง User ID
     userID := c.MustGet("user_id").(string)

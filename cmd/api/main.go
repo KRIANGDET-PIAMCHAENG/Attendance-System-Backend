@@ -11,14 +11,13 @@ import (
 	"os"
 	"time"
 
-	
 	// อย่าลืม import cron กับ repository ของคุณ
 	"github.com/robfig/cron/v3"
 	// "your_project/internal/repository"
 )
 
 func main() {
-	
+
 	// 1. Load .env file (อ่านค่าจากไฟล์ .env เข้าระบบ)
 	// ถ้าหาไฟล์ไม่เจอ จะพ่น log เตือน (แต่ไม่ error พัง) เผื่อรันบน Docker ที่ set env ไว้แล้ว
 	if err := godotenv.Load(); err != nil {
@@ -47,6 +46,8 @@ func main() {
 	configHdl := handler.NewConfigHandler(configRepo)
 
 	leaveHdl := handler.NewLeaveHandler(userRepo)
+
+	attendanceReqHdl := handler.NewAttendanceReqHandler(userRepo)
 
 	// 🌟 [NEW] 3.1 ประกาศ HolidayRepo สำหรับจัดการวันหยุด
 	holidayRepo := repository.NewHolidayRepo(db)
@@ -123,7 +124,7 @@ func main() {
 
 		leave_request := api.Group("/leave_request")
 		{
-			leave_request.POST("/create", leaveHdl.CreateLeaveRequest) 
+			leave_request.POST("/create", leaveHdl.CreateLeaveRequest)
 			leave_request.GET("/leave_info", leaveHdl.GetLeaveInfo)
 
 			leave_request.PUT("/resend", leaveHdl.ResendLeaveRequest)
@@ -139,7 +140,6 @@ func main() {
 
 			leave_status.GET("/detail", leaveHdl.GetLeaveDetail)
 
-
 		}
 
 		signature := api.Group("/signature")
@@ -147,6 +147,14 @@ func main() {
 			signature.GET("/get", userHdl.GetSignature)
 			signature.PUT("/update", userHdl.UpdateSignature)
 			signature.DELETE("/clear", userHdl.ClearSignature)
+		}
+
+		attendance_req := api.Group("/attendance_request")
+		{
+			attendance_req.POST("/create", attendanceReqHdl.CreateTimeRequest)
+			attendance_req.GET("/pending", attendanceReqHdl.GetPendingRequests)
+			attendance_req.GET("/recent", attendanceReqHdl.GetRecentRequests)
+			attendance_req.GET("/filter_range", attendanceReqHdl.GetFilterRange)
 		}
 
 	}
