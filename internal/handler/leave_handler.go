@@ -445,7 +445,7 @@ func (h *LeaveHandler) CancelLeaveRequest(c *gin.Context) {
         return
     }
 
-    // 4. ส่งให้ Repository ลบข้อมูล
+    // 4. ส่งให้ Repository เปลี่ยนสถานะ
     if err := h.repo.CancelLeaveRequest(userID, leaveID); err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "ไม่สามารถยกเลิกใบลาได้", "details": err.Error()})
         return
@@ -453,6 +453,6 @@ func (h *LeaveHandler) CancelLeaveRequest(c *gin.Context) {
 
     // 5. ส่งผลลัพธ์สำเร็จ
     c.JSON(http.StatusOK, gin.H{
-        "message": "ยกเลิกใบลาและลบข้อมูลสำเร็จ",
+        "message": "ยกเลิกใบลาสำเร็จ", // เปลี่ยนข้อความให้ซอฟต์ลง
     })
 }
