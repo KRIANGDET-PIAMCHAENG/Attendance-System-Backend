@@ -84,7 +84,7 @@ func (h *AttendanceReqHandler) CreateTimeRequest(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
-		"id":      reqIDStr, // ส่งรหัสกลับไปให้ Flutter
+		"request-id":      reqIDStr, // ส่งรหัสกลับไปให้ Flutter
 	})
 }
 
