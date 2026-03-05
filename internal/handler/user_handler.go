@@ -667,3 +667,25 @@ func (h *UserHandler) ClearSignature(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "ลบลายเซ็นเรียบร้อย"})
 }
+
+func (h *AttendanceReqHandler) CheckHoliday(c *gin.Context) {
+	// รับวันที่จาก Query เช่น ?date=2026-04-13
+	dateStr := c.Query("date") 
+	
+	if dateStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุวันที่ (date=YYYY-MM-DD)"})
+		return
+	}
+
+	holidayName, err := h.repo.CheckHoliday(dateStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ไม่สามารถตรวจสอบวันหยุดได้"})
+		return
+	}
+
+	// ส่งกลับไปให้ Frontend
+	c.JSON(http.StatusOK, gin.H{
+		"date":         dateStr,
+		"holiday_name": holidayName, // ถ้าเป็น nil ฝั่ง Gin จะแปลงเป็น null ให้เลย
+	})
+}

@@ -120,6 +120,8 @@ func main() {
 			attendance.GET("/history", userHdl.GetMyAttendanceHistory)
 
 			attendance.GET("/today", userHdl.GetTodayAttendanceStatus)
+
+			attendance.GET("/check_holiday", attendanceReqHdl.CheckHoliday)
 		}
 
 		leave_request := api.Group("/leave_request")

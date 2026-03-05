@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"time"
 	"my-app/internal/entity"
-	//"gorm.io/gorm"
+	"gorm.io/gorm"
+	
 )
 
 // Struct รับ JSON ตัวใหม่
@@ -100,4 +101,24 @@ func (r *UserRepo) GetTodayAttendance(userID string, date time.Time) (*Attendanc
 	}
 
 	return &record, nil
+}
+
+// เช็คว่าเป็นวันหยุดหรือไม่
+func (r *UserRepo) CheckHoliday(dateStr string) (*string, error) {
+	var holiday CompanyHoliday
+	
+	// ค้นหาจากฐานข้อมูลตามวันที่ส่งมา
+	err := r.db.Table("company_holidays").Where("holiday_date = ?", dateStr).First(&holiday).Error
+	
+	if err != nil {
+		// ถ้าไม่เจอข้อมูล (ไม่ใช่วันหยุด) ให้คืนค่า nil (ซึ่งจะถูกแปลงเป็น null ใน JSON)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		// ถ้า Error อื่นๆ (เช่น DB ล่ม)
+		return nil, err
+	}
+
+	// ถ้าเจอ คืนค่าชื่อวันหยุดกลับไป
+	return &holiday.Description, nil
 }

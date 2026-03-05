@@ -59,3 +59,10 @@ type RecentAttendanceResponse struct {
     DateEnd   time.Time `json:"date-end"`
     Approved  bool      `json:"approved"`
 }
+
+type CompanyHoliday struct {
+	ID          uint      `gorm:"primaryKey"`
+	HolidayDate time.Time `gorm:"column:holiday_date"`
+	Description string    `gorm:"column:description"`
+	Year        int       `gorm:"column:year"`
+}
