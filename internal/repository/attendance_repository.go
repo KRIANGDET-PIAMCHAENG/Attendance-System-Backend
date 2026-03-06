@@ -82,6 +82,23 @@ func (r *UserRepo) GetAttendanceHistory(userID string) ([]AttendanceRecord, erro
 	return records, err
 }
 
+type LeaveHistory struct {
+	DateFrom        time.Time `gorm:"column:date_from"`
+	DateTo          time.Time `gorm:"column:date_to"`
+	FromDateMorning bool      `gorm:"column:from_date_morning"` // ใช้ boolean ตาม DB
+	ToDateMorning   bool      `gorm:"column:to_date_morning"`   // ใช้ boolean ตาม DB
+}
+
+func (r *UserRepo) GetApprovedLeavesForHistory(userID string) ([]LeaveHistory, error) {
+	var leaves []LeaveHistory
+	// 🌟 เปลี่ยน Select ให้ดึงคอลัมน์ที่มีอยู่จริงในตารางคุณ
+	err := r.db.Table("leave_requests").
+		Select("date_from, date_to, from_date_morning, to_date_morning").
+		Where("user_id = ? AND status = 'approved'", userID).
+		Find(&leaves).Error
+	return leaves, err
+}
+
 // [NEW] ฟังก์ชันสำหรับดึงข้อมูลการลงเวลาของ "วันนี้"
 func (r *UserRepo) GetTodayAttendance(userID string, date time.Time) (*AttendanceRecord, error) {
 	var record AttendanceRecord

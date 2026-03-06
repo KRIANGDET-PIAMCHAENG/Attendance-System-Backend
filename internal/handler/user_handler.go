@@ -8,7 +8,7 @@ import(
 	"my-app/pkg/utils"
 	"fmt"
 	"time"
-
+	"sort"
 	"os"
 	"path/filepath"
 	"github.com/google/uuid"
@@ -475,51 +475,101 @@ func getThaiDOW(d time.Weekday) string {
 	return days[d]
 }
 
+
 func (h *UserHandler) GetMyAttendanceHistory(c *gin.Context) {
-	// 1. ดึง User ID จาก JWT Token
 	userID := c.MustGet("user_id").(string)
 
-	// 2. ดึงข้อมูลจาก Database
+	// 1. ดึงข้อมูลจากตาราง attendance (ข้อมูลการสแกนนิ้ว)
 	records, err := h.repo.GetAttendanceHistory(userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 		return
 	}
 
-	// 3. เตรียม Struct สำหรับส่งเป็น JSON
+	// 2. ดึงข้อมูลจากตาราง leave_requests (ข้อมูลการลางาน)
+	leaves, _ := h.repo.GetApprovedLeavesForHistory(userID)
+
+	// 3. เตรียม Struct สำหรับส่งเป็น JSON (แก้ CheckIn เป็น *string)
 	type ResponseItem struct {
-		Date     string  `json:"date"`
-		Dow      string  `json:"dow"`
-		CheckIn  string  `json:"checkIn"`
-		CheckOut *string `json:"checkOut"` // ใช้ Pointer เพื่อให้แสดงค่า null ได้
+		Date        string  `json:"date"`
+		Dow         string  `json:"dow"`
+		CheckIn     *string `json:"checkIn"`
+		CheckOut    *string `json:"checkOut"`
+		LeavePeriod string  `json:"leavePeriod"`
 	}
 
-	var result []ResponseItem
+	// 🌟 4. สร้าง Map เพื่อรวมข้อมูล (ใช้ Date เป็น Key)
+	historyMap := make(map[string]ResponseItem)
 
+	// 4.1 เอาข้อมูลการเข้างาน (Attendance) ยัดลง Map
 	for _, r := range records {
-		
-		// ดึงเวลา Check In (ตัดเอาแค่ 5 ตัวแรก เช่น "08:30:00" -> "08:30")
-		checkInStr := ""
+		dateStr := r.Date.Format("2006-01-02")
+
+		var checkInStr *string
 		if r.CheckIn != nil && len(*r.CheckIn) >= 5 {
-			checkInStr = (*r.CheckIn)[:5] 
+			ci := (*r.CheckIn)[:5]
+			checkInStr = &ci
 		}
 
-		// ดึงเวลา Check Out
 		var checkOutStr *string
 		if r.CheckOut != nil && len(*r.CheckOut) >= 5 {
 			co := (*r.CheckOut)[:5]
 			checkOutStr = &co
 		}
 
-		result = append(result, ResponseItem{
-			Date:     r.Date.Format("2006-01-02"), // Format เป็น YYYY-MM-DD
-			Dow:      getThaiDOW(r.Date.Weekday()), // แปลงเป็นภาษาไทย
-			CheckIn:  checkInStr,
-			CheckOut: checkOutStr,
-		})
+		historyMap[dateStr] = ResponseItem{
+			Date:        dateStr,
+			Dow:         getThaiDOW(r.Date.Weekday()), // ฟังก์ชันของคุณที่มีอยู่แล้ว
+			CheckIn:     checkInStr,
+			CheckOut:    checkOutStr,
+			LeavePeriod: "NONE", // ตั้งค่าเริ่มต้นเป็น ไม่ได้ลา
+		}
 	}
 
-	// ถ้าไม่มีข้อมูล ให้ส่ง array เปล่าไปแทน null
+	// 4.2 เอาข้อมูลการลา (Leaves) มาผสมทับลงไป
+	for _, l := range leaves {
+		// วนลูปตั้งแต่วันที่เริ่มลา จนถึง วันที่สิ้นสุดการลา
+		for d := l.DateFrom; !d.After(l.DateTo); d = d.AddDate(0, 0, 1) {
+			dateStr := d.Format("2006-01-02")
+			
+			// 🌟 คาดเดาประเภทการลาจากเวลา (เพราะตารางคุณเก็บ DateFrom เป็น Timestamp มีชั่วโมงติดมาด้วย)
+			period := "FULL_DAY" 
+			if l.DateFrom.Format("2006-01-02") == l.DateTo.Format("2006-01-02") {
+				// ถ้าลาแค่วันเดียว ลองเช็คจากชั่วโมง (อันนี้ปรับตัวเลขได้ตาม Logic บริษัทคุณนะครับ)
+				if l.DateTo.Hour() <= 12 {
+					period = "MORNING"
+				} else if l.DateFrom.Hour() >= 13 {
+					period = "AFTERNOON"
+				}
+			}
+
+			if item, exists := historyMap[dateStr]; exists {
+				item.LeavePeriod = period
+				historyMap[dateStr] = item
+			} else {
+				historyMap[dateStr] = ResponseItem{
+					Date:        dateStr,
+					Dow:         getThaiDOW(d.Weekday()),
+					CheckIn:     nil, 
+					CheckOut:    nil, 
+					LeavePeriod: period,
+				}
+			}
+		}
+	}
+
+	// 5. แปลง Map กลับมาเป็น Slice (Array)
+	var result []ResponseItem
+	for _, v := range historyMap {
+		result = append(result, v)
+	}
+
+	// 6. เรียงลำดับวันที่จากใหม่ไปเก่า (DESC) เพราะ Map ใน Go จะสลับลำดับมั่ว
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Date > result[j].Date
+	})
+
+	// ถ้าไม่มีข้อมูลเลย ให้ส่ง array เปล่า [] ไปแทน null
 	if result == nil {
 		result = []ResponseItem{}
 	}
