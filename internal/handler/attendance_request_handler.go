@@ -138,7 +138,7 @@ func (h *AttendanceReqHandler) GetRecentRequests(c *gin.Context) {
 			"id":         fmt.Sprintf("REQ%011d", r.ID),
 			"date-start": r.DateFrom.Format(time.RFC3339),
 			"date-end":   r.DateTo.Format(time.RFC3339),
-			"approved":   r.Status == "approved", // ถ้า status เป็น approved = true, ถ้าเป็น rejected = false
+			"approved":   r.Status ,
 		})
 	}
 
