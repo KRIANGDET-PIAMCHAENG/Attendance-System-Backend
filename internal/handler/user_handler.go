@@ -475,7 +475,6 @@ func getThaiDOW(d time.Weekday) string {
 	return days[d]
 }
 
-
 func (h *UserHandler) GetMyAttendanceHistory(c *gin.Context) {
 	userID := c.MustGet("user_id").(string)
 
@@ -489,7 +488,7 @@ func (h *UserHandler) GetMyAttendanceHistory(c *gin.Context) {
 	// 2. ดึงข้อมูลจากตาราง leave_requests (ข้อมูลการลางาน)
 	leaves, _ := h.repo.GetApprovedLeavesForHistory(userID)
 
-	// 3. เตรียม Struct สำหรับส่งเป็น JSON (แก้ CheckIn เป็น *string)
+	// 3. เตรียม Struct สำหรับส่งเป็น JSON
 	type ResponseItem struct {
 		Date        string  `json:"date"`
 		Dow         string  `json:"dow"`
@@ -498,10 +497,10 @@ func (h *UserHandler) GetMyAttendanceHistory(c *gin.Context) {
 		LeavePeriod string  `json:"leavePeriod"`
 	}
 
-	// 🌟 4. สร้าง Map เพื่อรวมข้อมูล (ใช้ Date เป็น Key)
+	// 4. สร้าง Map เพื่อรวมข้อมูล (ใช้ Date เป็น Key)
 	historyMap := make(map[string]ResponseItem)
 
-	// 4.1 เอาข้อมูลการเข้างาน (Attendance) ยัดลง Map
+	// 4.1 เอาข้อมูลการเข้างาน (Attendance) ยัดลง Map เป็นตัวตั้งต้น
 	for _, r := range records {
 		dateStr := r.Date.Format("2006-01-02")
 
@@ -519,10 +518,10 @@ func (h *UserHandler) GetMyAttendanceHistory(c *gin.Context) {
 
 		historyMap[dateStr] = ResponseItem{
 			Date:        dateStr,
-			Dow:         getThaiDOW(r.Date.Weekday()), // ฟังก์ชันของคุณที่มีอยู่แล้ว
+			Dow:         getThaiDOW(r.Date.Weekday()),
 			CheckIn:     checkInStr,
 			CheckOut:    checkOutStr,
-			LeavePeriod: "NONE", // ตั้งค่าเริ่มต้นเป็น ไม่ได้ลา
+			LeavePeriod: "NONE", // ตั้งเป็น NONE ไว้ก่อน
 		}
 	}
 
@@ -532,10 +531,9 @@ func (h *UserHandler) GetMyAttendanceHistory(c *gin.Context) {
 		for d := l.DateFrom; !d.After(l.DateTo); d = d.AddDate(0, 0, 1) {
 			dateStr := d.Format("2006-01-02")
 			
-			// 🌟 คาดเดาประเภทการลาจากเวลา (เพราะตารางคุณเก็บ DateFrom เป็น Timestamp มีชั่วโมงติดมาด้วย)
+			// 🌟 คาดเดาประเภทการลาจากเวลา
 			period := "FULL_DAY" 
 			if l.DateFrom.Format("2006-01-02") == l.DateTo.Format("2006-01-02") {
-				// ถ้าลาแค่วันเดียว ลองเช็คจากชั่วโมง (อันนี้ปรับตัวเลขได้ตาม Logic บริษัทคุณนะครับ)
 				if l.DateTo.Hour() <= 12 {
 					period = "MORNING"
 				} else if l.DateFrom.Hour() >= 13 {
@@ -543,18 +541,13 @@ func (h *UserHandler) GetMyAttendanceHistory(c *gin.Context) {
 				}
 			}
 
+			// 🌟 สำคัญ: เช็คว่าวันนั้น "มีการสแกนนิ้ว" (อยู่ใน Map) หรือไม่
 			if item, exists := historyMap[dateStr]; exists {
+				// ถ้ามีการสแกนนิ้ว ถึงจะเอา LeavePeriod ไปแปะทับ
 				item.LeavePeriod = period
 				historyMap[dateStr] = item
-			} else {
-				historyMap[dateStr] = ResponseItem{
-					Date:        dateStr,
-					Dow:         getThaiDOW(d.Weekday()),
-					CheckIn:     nil, 
-					CheckOut:    nil, 
-					LeavePeriod: period,
-				}
 			}
+			// ❌ ลบ else ทิ้ง! ถ้าวันนั้นไม่ได้สแกนนิ้ว (เช่น ลาเต็มวันแล้วอยู่บ้าน) ก็ไม่ต้องโชว์ในประวัติการเข้างาน
 		}
 	}
 
@@ -564,12 +557,12 @@ func (h *UserHandler) GetMyAttendanceHistory(c *gin.Context) {
 		result = append(result, v)
 	}
 
-	// 6. เรียงลำดับวันที่จากใหม่ไปเก่า (DESC) เพราะ Map ใน Go จะสลับลำดับมั่ว
+	// 6. เรียงลำดับวันที่จากใหม่ไปเก่า (DESC)
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].Date > result[j].Date
 	})
 
-	// ถ้าไม่มีข้อมูลเลย ให้ส่ง array เปล่า [] ไปแทน null
+	// ถ้าไม่มีข้อมูล ให้ส่ง array เปล่าไปแทน null
 	if result == nil {
 		result = []ResponseItem{}
 	}
