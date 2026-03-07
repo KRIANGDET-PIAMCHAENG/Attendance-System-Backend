@@ -52,6 +52,9 @@ func main() {
 	// 🌟 [NEW] 3.1 ประกาศ HolidayRepo สำหรับจัดการวันหยุด
 	holidayRepo := repository.NewHolidayRepo(db)
 
+	personnelRepo := repository.NewPersonnelRepo(db)
+    personnelHdl := handler.NewPersonnelHandler(personnelRepo)
+
 	// ==========================================
 	// 🌟 [NEW] Setup Cron Job (ทำงานหลังบ้าน)
 	// ==========================================
@@ -158,10 +161,9 @@ func main() {
 			attendance_req.GET("/recent", attendanceReqHdl.GetRecentRequests)
 			attendance_req.GET("/filter_range", attendanceReqHdl.GetFilterRange)
 
-
 			attendance_req.GET("/detail", attendanceReqHdl.GetAttendanceDetail)
-            attendance_req.DELETE("/delete", attendanceReqHdl.DeleteAttendanceRequest)
-            attendance_req.PUT("/resend", attendanceReqHdl.ResendAttendanceRequest)
+			attendance_req.DELETE("/delete", attendanceReqHdl.DeleteAttendanceRequest)
+			attendance_req.PUT("/resend", attendanceReqHdl.ResendAttendanceRequest)
 		}
 
 	}
@@ -232,6 +234,22 @@ func main() {
 			configGroup.PUT("/leave/update", configHdl.UpdateLeaveConfig)
 		}
 	}
+
+	manager := r.Group("/manager")
+    manager.Use(middleware.JWTMiddleware()) // แนะนำให้เปิด Middleware ไว้กันคนนอกแอบดู
+    {
+        // ✅ เปลี่ยนจาก api.Group เป็น manager.Group ครับ
+        personnel := manager.Group("/personnel_info") 
+        {
+            personnel.GET("/pending", personnelHdl.GetPending)
+            personnel.GET("/recent", personnelHdl.GetRecent)
+            personnel.GET("/filter_range", personnelHdl.GetFilterRange)
+            personnel.GET("/detail", personnelHdl.GetDetail)
+            personnel.GET("/users", personnelHdl.GetUsers)
+			personnel.GET("/permissions", personnelHdl.GetPermissionLevel)
+
+        }
+    }
 
 	// 4. Start Server
 	log.Println("🚀 Server running on http://localhost:3000")
