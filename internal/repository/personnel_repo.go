@@ -148,13 +148,30 @@ func (r *PersonnelRepo) GetDetail(managerID string, reqID int) (map[string]inter
         }
     }
 
-    // (ดึงข้อมูลการอนุมัติ เหมือนเดิม)
+   // (ดึงข้อมูลการอนุมัติ)
     var app struct {
-        ApproverName string `gorm:"column:approver_name"`; ApproveRole string `gorm:"column:approve_role"`
-        Reason string `gorm:"column:reason"`; CreatedAt time.Time `gorm:"column:created_at"`
+        ApproverName string `gorm:"column:approver_name"`
+        ApproveRole  string `gorm:"column:approve_role"`
+        Reason       string `gorm:"column:reason"`
+        CreatedAt    time.Time `gorm:"column:created_at"`
     }
     r.db.Table("leave_approvals").Where("leave_request_id = ?", reqID).First(&app)
 
+    // 🌟 [NEW] ถ้ายังไม่มีคนอนุมัติ ให้ไปหาว่า "ตำแหน่งอะไร" ที่ต้องเป็นคนกด Approve (role_type = 'main')
+    if app.ApproveRole == "" {
+        var expectedRoleName string
+        r.db.Table("subordinate_manager_roles smr").
+            Select("r.role_name").
+            Joins("JOIN role r ON smr.manager_role_id = r.role_id").
+            Where("smr.subordinate_id = ? AND r.role_type = ?", req.UserID, "main").
+            Limit(1).
+            Scan(&expectedRoleName)
+        
+        // ยัดชื่อตำแหน่งที่หาเจอใส่กลับเข้าไป
+        app.ApproveRole = expectedRoleName
+    }
+
+    // ประกอบร่าง JSON ส่งกลับ
     return map[string]interface{}{
         "request-detail": map[string]interface{}{
             "leave-type": req.LeaveType, "date-from": req.DateFrom.Format(time.RFC3339), "date-to": req.DateTo.Format(time.RFC3339),
@@ -162,8 +179,11 @@ func (r *PersonnelRepo) GetDetail(managerID string, reqID int) (map[string]inter
             "remark": req.Remark, "evidence-files": files, "request-date": req.CreatedAt.Format(time.RFC3339),
         },
         "approve-detail": map[string]interface{}{
-            "status": req.Status, "approve-role": app.ApproveRole, "approver": app.ApproverName,
-            "reason": app.Reason, "approve-date": app.CreatedAt.Format(time.RFC3339),
+            "status": req.Status, 
+            "approve-role": app.ApproveRole, // 👈 ตรงนี้จะกลายเป็นชื่อตำแหน่งหัวหน้า (main) ทันที
+            "approver": app.ApproverName,
+            "reason": app.Reason, 
+            "approve-date": app.CreatedAt.Format(time.RFC3339),
         },
     }, nil
 }
