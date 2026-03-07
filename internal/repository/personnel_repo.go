@@ -107,105 +107,120 @@ func (r *PersonnelRepo) GetFilterRange(managerID, personnelID string) (time.Time
 		Scan(&res).Error
 	return res.Start, res.End, err
 }
-
 // 4. Get Detail (ตัดตัวอักษร LEV มาจาก Handler แล้ว)
 func (r *PersonnelRepo) GetDetail(managerID string, reqID int) (map[string]interface{}, error) {
-	// ดึง UserID ของใบคำขอนี้ออกมาก่อน เพื่อเช็คสิทธิ์
-	var req struct {
-		UserID string `gorm:"column:user_id"`
-		LeaveType string `gorm:"column:leave_type"`; DateFrom time.Time `gorm:"column:date_from"`
-		DateTo time.Time `gorm:"column:date_to"`; FromDateMorning bool `gorm:"column:from_date_morning"`
-		ToDateMorning bool `gorm:"column:to_date_morning"`; Remark string `gorm:"column:remark"`
-		CreatedAt time.Time `gorm:"column:created_at"`; Status string `gorm:"column:status"`
-	}
-	if err := r.db.Table("leave_requests").Where("id = ?", reqID).First(&req).Error; err != nil {
-		return nil, errors.New("ไม่พบใบคำขอนี้")
-	}
+    // ดึง UserID ของใบคำขอนี้ออกมาก่อน เพื่อเช็คสิทธิ์
+    var req struct {
+        UserID string `gorm:"column:user_id"`
+        LeaveType string `gorm:"column:leave_type"`; DateFrom time.Time `gorm:"column:date_from"`
+        DateTo time.Time `gorm:"column:date_to"`; FromDateMorning bool `gorm:"column:from_date_morning"`
+        ToDateMorning bool `gorm:"column:to_date_morning"`; Remark string `gorm:"column:remark"`
+        CreatedAt time.Time `gorm:"column:created_at"`; Status string `gorm:"column:status"`
+    }
+    if err := r.db.Table("leave_requests").Where("id = ?", reqID).First(&req).Error; err != nil {
+        return nil, errors.New("ไม่พบใบคำขอนี้")
+    }
 
-	// 🛡️ เช็คว่าคนขอใบนี้ เป็นลูกน้องของคนที่กดดูหรือเปล่า?
-	if !r.checkPermission(managerID, req.UserID) {
-		return nil, errors.New("unauthorized: คุณไม่มีสิทธิ์ดูรายละเอียดใบคำขอของพนักงานท่านนี้")
-	}
+    // 🛡️ เช็คสิทธิ์
+    if !r.checkPermission(managerID, req.UserID) {
+        return nil, errors.New("unauthorized: คุณไม่มีสิทธิ์ดูรายละเอียดใบคำขอของพนักงานท่านนี้")
+    }
 
-	// (ดึงข้อมูลไฟล์แนบและการอนุมัติ เหมือนเดิมเป๊ะ)
-	var files []map[string]interface{}
-	r.db.Table("leave_attachments").Where("leave_request_id = ?", reqID).
-		Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").
-		Find(&files)
+    // 🌟 [แก้ตรงนี้] ดึงข้อมูลไฟล์แนบมาเก็บไว้ก่อน
+    var files []map[string]interface{}
+    r.db.Table("leave_attachments").Where("leave_request_id = ?", reqID).
+        Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").
+        Find(&files)
 
-	var app struct {
-		ApproverName string `gorm:"column:approver_name"`; ApproveRole string `gorm:"column:approve_role"`
-		Reason string `gorm:"column:reason"`; CreatedAt time.Time `gorm:"column:created_at"`
-	}
-	r.db.Table("leave_approvals").Where("leave_request_id = ?", reqID).First(&app)
+    // 🌟 [เพิ่มตรงนี้] วน Loop เติม Base URL ให้เป็น Link เต็ม
+    // ⚠️ ถ้าขึ้น Production จริงๆ แนะนำให้ดึงจาก os.Getenv("BASE_URL") นะครับ
+    baseURL := "http://20.194.9.179:3000/" 
+    for i := range files {
+        if path, ok := files[i]["file-url"].(string); ok && path != "" {
+            // เช็คกันเหนียว ถ้าใน DB มันไม่ได้ขึ้นต้นด้วย http:// (แปลว่าเป็น Path สั้น) ให้เติม baseURL นำหน้า
+            if len(path) < 4 || path[:4] != "http" {
+                // ลบ / ด้านหน้าสุดออก (ถ้ามี) เพื่อไม่ให้ http://20.194.9.179:3000//uploads slash เบิ้ล
+                if path[0] == '/' {
+                    path = path[1:]
+                }
+                files[i]["file-url"] = baseURL + path
+            }
+        }
+    }
 
-	return map[string]interface{}{
-		"request-detail": map[string]interface{}{
-			"leave-type": req.LeaveType, "date-from": req.DateFrom.Format(time.RFC3339), "date-to": req.DateTo.Format(time.RFC3339),
-			"from-date-morning": req.FromDateMorning, "to-date-morning": req.ToDateMorning,
-			"remark": req.Remark, "evidence-files": files, "request-date": req.CreatedAt.Format(time.RFC3339),
-		},
-		"approve-detail": map[string]interface{}{
-			"status": req.Status, "approve-role": app.ApproveRole, "approver": app.ApproverName,
-			"reason": app.Reason, "approve-date": app.CreatedAt.Format(time.RFC3339),
-		},
-	}, nil
+    // (ดึงข้อมูลการอนุมัติ เหมือนเดิม)
+    var app struct {
+        ApproverName string `gorm:"column:approver_name"`; ApproveRole string `gorm:"column:approve_role"`
+        Reason string `gorm:"column:reason"`; CreatedAt time.Time `gorm:"column:created_at"`
+    }
+    r.db.Table("leave_approvals").Where("leave_request_id = ?", reqID).First(&app)
+
+    return map[string]interface{}{
+        "request-detail": map[string]interface{}{
+            "leave-type": req.LeaveType, "date-from": req.DateFrom.Format(time.RFC3339), "date-to": req.DateTo.Format(time.RFC3339),
+            "from-date-morning": req.FromDateMorning, "to-date-morning": req.ToDateMorning,
+            "remark": req.Remark, "evidence-files": files, "request-date": req.CreatedAt.Format(time.RFC3339),
+        },
+        "approve-detail": map[string]interface{}{
+            "status": req.Status, "approve-role": app.ApproveRole, "approver": app.ApproverName,
+            "reason": app.Reason, "approve-date": app.CreatedAt.Format(time.RFC3339),
+        },
+    }, nil
 }
-
 // 5. Get Users (หัวหน้าเห็นเฉพาะลูกน้อง หรือ Admin เห็นทุกคน)
 func (r *PersonnelRepo) GetUsers(managerID string) ([]map[string]interface{}, error) {
-	// เช็คว่าเป็น Admin หรือเปล่า
-	var adminCount int64
-	r.db.Table("user_roles ur").Joins("JOIN role r ON ur.role_id = r.role_id").
-		Where("ur.user_id = ? AND r.role_type = ?", managerID, "admin").Count(&adminCount)
-	isAdmin := adminCount > 0
+    // เช็คว่าเป็น Admin หรือเปล่า
+    var adminCount int64
+    r.db.Table("user_roles ur").Joins("JOIN role r ON ur.role_id = r.role_id").
+        Where("ur.user_id = ? AND r.role_type = ?", managerID, "admin").Count(&adminCount)
+    isAdmin := adminCount > 0
 
-	query := r.db.Table("user_info ui").
-		Select("ui.user_id, ui.fullname_thai, ui.fullname_eng, ui.picture, ui.role_init, r.role_id, r.role_name, r.role_color").
-		Joins("LEFT JOIN user_roles ur ON ui.user_id = ur.user_id").
-		Joins("LEFT JOIN role r ON ur.role_id = r.role_id")
+    query := r.db.Table("user_info ui").
+        Select("ui.user_id, ui.fullname_thai, ui.fullname_eng, ui.picture, ui.role_init, r.role_id, r.role_name, r.role_color").
+        Joins("LEFT JOIN user_roles ur ON ui.user_id = ur.user_id").
+        Joins("LEFT JOIN role r ON ur.role_id = r.role_id")
 
-	// 🛡️ ถ้าไม่ใช่ Admin ให้ Filter เอามาแค่ "ลูกน้อง"
-	if !isAdmin {
-		subQuery := r.db.Table("subordinate_manager_roles smr").
-			Select("sr.user_id").
-			Joins("JOIN user_roles mr ON smr.manager_role_id = mr.role_id").
-			Joins("JOIN user_roles sr ON smr.subordinate_role_id = sr.role_id").
-			Where("mr.user_id = ?", managerID)
-		
-		query = query.Where("ui.user_id IN (?)", subQuery)
-	}
+    // 🛡️ ถ้าไม่ใช่ Admin ให้ Filter เอามาแค่ "ลูกน้อง"
+    if !isAdmin {
+        // 🌟 [แก้ตรงนี้] ดึง subordinate_id ตรงๆ จากตาราง subordinate_manager_roles ไม่ต้องไป JOIN user_roles ฝั่งลูกน้องแล้ว
+        subQuery := r.db.Table("subordinate_manager_roles smr").
+            Select("smr.subordinate_id").
+            Joins("JOIN user_roles mr ON smr.manager_role_id = mr.role_id").
+            Where("mr.user_id = ?", managerID)
+        
+        query = query.Where("ui.user_id IN (?)", subQuery)
+    }
 
-	type UserRow struct {
-		ID string `gorm:"column:user_id"`; NameTh string `gorm:"column:fullname_thai"`; NameEn string `gorm:"column:fullname_eng"`
-		Pic string `gorm:"column:picture"`; InitRole string `gorm:"column:role_init"`; RoleID string; RoleName string; RoleColor string
-	}
-	var rows []UserRow
-	query.Scan(&rows)
+    type UserRow struct {
+        ID string `gorm:"column:user_id"`; NameTh string `gorm:"column:fullname_thai"`; NameEn string `gorm:"column:fullname_eng"`
+        Pic string `gorm:"column:picture"`; InitRole string `gorm:"column:role_init"`; RoleID string; RoleName string; RoleColor string
+    }
+    var rows []UserRow
+    query.Scan(&rows)
 
-	// แปลงข้อมูลเป็น JSON Format
-	userMap := make(map[string]map[string]interface{})
-	for _, row := range rows {
-		if _, exists := userMap[row.ID]; !exists {
-			userMap[row.ID] = map[string]interface{}{
-				"id": row.ID, "name-th": row.NameTh, "name-en": row.NameEn,
-				"avatar-url": row.Pic, "initial-role": row.InitRole, "roles": []map[string]string{},
-			}
-		}
-		if row.RoleID != "" {
-			roles := userMap[row.ID]["roles"].([]map[string]string)
-			roles = append(roles, map[string]string{
-				"role-id": row.RoleID, "role-name": row.RoleName, "role-color": row.RoleColor,
-			})
-			userMap[row.ID]["roles"] = roles
-		}
-	}
+    // แปลงข้อมูลเป็น JSON Format
+    userMap := make(map[string]map[string]interface{})
+    for _, row := range rows {
+        if _, exists := userMap[row.ID]; !exists {
+            userMap[row.ID] = map[string]interface{}{
+                "id": row.ID, "name-th": row.NameTh, "name-en": row.NameEn,
+                "avatar-url": row.Pic, "initial-role": row.InitRole, "roles": []map[string]string{},
+            }
+        }
+        if row.RoleID != "" {
+            roles := userMap[row.ID]["roles"].([]map[string]string)
+            roles = append(roles, map[string]string{
+                "role-id": row.RoleID, "role-name": row.RoleName, "role-color": row.RoleColor,
+            })
+            userMap[row.ID]["roles"] = roles
+        }
+    }
 
-	var results []map[string]interface{}
-	for _, v := range userMap {
-		results = append(results, v)
-	}
-	return results, nil
+    var results []map[string]interface{}
+    for _, v := range userMap {
+        results = append(results, v)
+    }
+    return results, nil
 }
 
 
