@@ -215,7 +215,6 @@ func (r *PersonnelRepo) GetUsers(managerID string) ([]map[string]interface{}, er
 	}
 	return results, nil
 }
-
 // 6. Check Permission Level
 func (r *PersonnelRepo) CheckApprovalPermission(requesterID string, targetID string) (int, error) {
 	// 1. เช็คก่อนว่า Requester เป็น Admin หรือเปล่า
@@ -230,17 +229,18 @@ func (r *PersonnelRepo) CheckApprovalPermission(requesterID string, targetID str
 	}
 
 	// 2. ถ้าไม่ใช่ Admin ให้เช็คว่า Requester เป็น Manager ของ Target ไหม
-	// โดยเชื่อมตาราง subordinate_manager_roles เข้ากับ user_roles ของทั้งสองคน
+	// 🌟 [NEW] และต้องเช็คด้วยว่า Role ของ Manager คนนี้ มี role_type เป็น 'main' หรือไม่
 	var managerCount int64
 	r.db.Table("subordinate_manager_roles smr").
-		Joins("JOIN user_roles mr ON smr.manager_role_id = mr.role_id"). // ฝั่งหัวหน้า (Requester)
-		Joins("JOIN user_roles sr ON smr.subordinate_role_id = sr.role_id"). // ฝั่งลูกน้อง (Target)
-		Where("mr.user_id = ? AND sr.user_id = ?", requesterID, targetID).
+		Joins("JOIN user_roles mr ON smr.manager_role_id = mr.role_id").        // ฝั่งหัวหน้า (Requester)
+		Joins("JOIN role r_manager ON mr.role_id = r_manager.role_id").         // 🌟 JOIN ตาราง role ของหัวหน้า
+		Joins("JOIN user_roles sr ON smr.subordinate_role_id = sr.role_id").    // ฝั่งลูกน้อง (Target)
+		Where("mr.user_id = ? AND sr.user_id = ? AND r_manager.role_type = ?", requesterID, targetID, "main"). // 🌟 เพิ่มเงื่อนไข 'main'
 		Count(&managerCount)
 
 	if managerCount > 0 {
-		return 1, nil // มีสิทธิ์อนุมัติ (เป็นหัวหน้าโดยตรง)
+		return 1, nil // มีสิทธิ์อนุมัติ (เป็นหัวหน้าสายตรง + เป็น role หลัก)
 	}
 
-	return 0, nil // ไม่มีสิทธิ์เลย
+	return 0, nil // ไม่มีสิทธิ์เลย (ไม่ใช่ลูกน้องตัวเอง หรือเป็นหัวหน้าแต่ไม่ใช่ main)
 }
