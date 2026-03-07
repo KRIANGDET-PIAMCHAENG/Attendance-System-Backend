@@ -1,8 +1,10 @@
 package repository
 
 import (
+	"errors"
 	"fmt"
 	"time"
+
 	"gorm.io/gorm"
 )
 
@@ -14,36 +16,63 @@ func NewPersonnelRepo(db *gorm.DB) *PersonnelRepo {
 	return &PersonnelRepo{db: db}
 }
 
+// 🛡️ Helper: ฟังก์ชันเช็คสิทธิ์ว่า Manager คนนี้ ดูข้อมูลของ TargetUser ได้ไหม?
+func (r *PersonnelRepo) checkPermission(managerID, targetUserID string) bool {
+	// 1. ถ้าเป็น Admin ให้ผ่านเลย
+	var adminCount int64
+	r.db.Table("user_roles ur").
+		Joins("JOIN role r ON ur.role_id = r.role_id").
+		Where("ur.user_id = ? AND r.role_type = ?", managerID, "admin").
+		Count(&adminCount)
+	if adminCount > 0 {
+		return true
+	}
+
+	// 2. ถ้าไม่ใช่ Admin เช็คว่าเป็นหัวหน้าโดยตรงของคนนี้ไหม
+	var subCount int64
+	r.db.Table("subordinate_manager_roles smr").
+		Joins("JOIN user_roles mr ON smr.manager_role_id = mr.role_id").
+		Joins("JOIN user_roles sr ON smr.subordinate_role_id = sr.role_id").
+		Where("mr.user_id = ? AND sr.user_id = ?", managerID, targetUserID).
+		Count(&subCount)
+
+	return subCount > 0
+}
+
 // 1. Get Pending
-func (r *PersonnelRepo) GetPending(personnelID string) ([]map[string]interface{}, error) {
+func (r *PersonnelRepo) GetPending(managerID, personnelID string) ([]map[string]interface{}, error) {
+	if !r.checkPermission(managerID, personnelID) {
+		return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูลของพนักงานท่านนี้")
+	}
+
 	var results []map[string]interface{}
-	
 	type Result struct {
-		ID        int
-		LeaveType string
-		DateFrom  time.Time
+		ID        int; LeaveType string; DateFrom  time.Time
 	}
 	var rows []Result
 
-	err := r.db.Table("leave_requests").
+	r.db.Table("leave_requests").
 		Select("id, leave_type, date_from").
 		Where("user_id = ? AND status = 'pending'", personnelID).
-		Scan(&rows).Error
+		Scan(&rows)
 
 	for _, row := range rows {
 		results = append(results, map[string]interface{}{
-			"id":         fmt.Sprintf("LEV%012d", row.ID), // เติมเลขให้ครบ 12 หลัก
+			"id":         fmt.Sprintf("LEV%012d", row.ID),
 			"leave-type": row.LeaveType,
 			"date-start": row.DateFrom.Format(time.RFC3339),
 		})
 	}
-	return results, err
+	return results, nil
 }
 
 // 2. Get Recent
-func (r *PersonnelRepo) GetRecent(personnelID string, startDate, endDate string) ([]map[string]interface{}, error) {
+func (r *PersonnelRepo) GetRecent(managerID, personnelID, startDate, endDate string) ([]map[string]interface{}, error) {
+	if !r.checkPermission(managerID, personnelID) {
+		return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูลของพนักงานท่านนี้")
+	}
+
 	var results []map[string]interface{}
-	
 	query := r.db.Table("leave_requests").
 		Select("id, leave_type, date_from, status").
 		Where("user_id = ? AND status != 'pending'", personnelID)
@@ -53,33 +82,29 @@ func (r *PersonnelRepo) GetRecent(personnelID string, startDate, endDate string)
 	}
 
 	type Result struct {
-		ID        int
-		LeaveType string
-		DateFrom  time.Time
-		Status    string
+		ID int; LeaveType string; DateFrom time.Time; Status string
 	}
 	var rows []Result
-	err := query.Scan(&rows).Error
+	query.Scan(&rows)
 
 	for _, row := range rows {
-		approved := false
-		if row.Status == "approved" {
-			approved = true
-		}
-		
 		results = append(results, map[string]interface{}{
 			"id":         fmt.Sprintf("LEV%012d", row.ID),
 			"leave-type": row.LeaveType,
 			"date-start": row.DateFrom.Format(time.RFC3339),
 			"status":     row.Status,
-			"approved":   approved, // ส่งไปทั้ง status และ approved กันเหนียว
+			"approved":   (row.Status == "approved"),
 		})
 	}
-	return results, err
+	return results, nil
 }
 
 // 3. Get Filter Range
-func (r *PersonnelRepo) GetFilterRange(personnelID string) (time.Time, time.Time, error) {
+func (r *PersonnelRepo) GetFilterRange(managerID, personnelID string) (time.Time, time.Time, error) {
+	if !r.checkPermission(managerID, personnelID) {
+		return time.Time{}, time.Time{}, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูล")
+	}
+
 	var res struct {
 		Start time.Time `gorm:"column:start_date"`
 		End   time.Time `gorm:"column:end_date"`
@@ -91,127 +116,96 @@ func (r *PersonnelRepo) GetFilterRange(personnelID string) (time.Time, time.Time
 	return res.Start, res.End, err
 }
 
-// 4. Get Detail
-func (r *PersonnelRepo) GetDetail(reqID int) (map[string]interface{}, error) {
-	// 4.1 ดึงข้อมูลหลัก
+// 4. Get Detail (ตัดตัวอักษร LEV มาจาก Handler แล้ว)
+func (r *PersonnelRepo) GetDetail(managerID string, reqID int) (map[string]interface{}, error) {
+	// ดึง UserID ของใบคำขอนี้ออกมาก่อน เพื่อเช็คสิทธิ์
 	var req struct {
-		LeaveType       string    `gorm:"column:leave_type"`
-		DateFrom        time.Time `gorm:"column:date_from"`
-		DateTo          time.Time `gorm:"column:date_to"`
-		FromDateMorning bool      `gorm:"column:from_date_morning"`
-		ToDateMorning   bool      `gorm:"column:to_date_morning"`
-		Remark          string    `gorm:"column:remark"`
-		CreatedAt       time.Time `gorm:"column:created_at"`
-		Status          string    `gorm:"column:status"`
+		UserID string `gorm:"column:user_id"`
+		LeaveType string `gorm:"column:leave_type"`; DateFrom time.Time `gorm:"column:date_from"`
+		DateTo time.Time `gorm:"column:date_to"`; FromDateMorning bool `gorm:"column:from_date_morning"`
+		ToDateMorning bool `gorm:"column:to_date_morning"`; Remark string `gorm:"column:remark"`
+		CreatedAt time.Time `gorm:"column:created_at"`; Status string `gorm:"column:status"`
 	}
 	if err := r.db.Table("leave_requests").Where("id = ?", reqID).First(&req).Error; err != nil {
-		return nil, err
+		return nil, errors.New("ไม่พบใบคำขอนี้")
 	}
 
-	// 4.2 ดึงไฟล์แนบ
-	type Attachment struct {
-		OriginalName string `gorm:"column:original_name"`
-		FilePath     string `gorm:"column:file_path"`
-		FileType     string `gorm:"column:file_type"`
-		FileSize     int64  `gorm:"column:file_size"`
+	// 🛡️ เช็คว่าคนขอใบนี้ เป็นลูกน้องของคนที่กดดูหรือเปล่า?
+	if !r.checkPermission(managerID, req.UserID) {
+		return nil, errors.New("unauthorized: คุณไม่มีสิทธิ์ดูรายละเอียดใบคำขอของพนักงานท่านนี้")
 	}
-	var atts []Attachment
-	r.db.Table("leave_attachments").Where("leave_request_id = ?", reqID).Find(&atts)
 
+	// (ดึงข้อมูลไฟล์แนบและการอนุมัติ เหมือนเดิมเป๊ะ)
 	var files []map[string]interface{}
-	for _, att := range atts {
-		// ถ้า Type เป็น null จาก DB ให้ดึงจากนามสกุลไฟล์แทน
-		fileType := att.FileType
-		if fileType == "" {
-			fileType = "unknown"
-		}
-		files = append(files, map[string]interface{}{
-			"file-name": att.OriginalName,
-			"file-url":  att.FilePath, // ถ้ามี base url เอามาต่อตรงนี้ได้เลยครับ
-			"file-type": fileType,
-			"file-size": att.FileSize,
-		})
-	}
+	r.db.Table("leave_attachments").Where("leave_request_id = ?", reqID).
+		Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").
+		Find(&files)
 
-	// 4.3 ดึงข้อมูลการอนุมัติ (ถ้ามี)
-	var approval struct {
-		ApproverName string    `gorm:"column:approver_name"`
-		ApproveRole  string    `gorm:"column:approve_role"`
-		Status       string    `gorm:"column:status"`
-		Reason       string    `gorm:"column:reason"`
-		CreatedAt    time.Time `gorm:"column:created_at"`
+	var app struct {
+		ApproverName string `gorm:"column:approver_name"`; ApproveRole string `gorm:"column:approve_role"`
+		Reason string `gorm:"column:reason"`; CreatedAt time.Time `gorm:"column:created_at"`
 	}
-	r.db.Table("leave_approvals").Where("leave_request_id = ?", reqID).First(&approval)
+	r.db.Table("leave_approvals").Where("leave_request_id = ?", reqID).First(&app)
 
-	// ประกอบร่าง
 	return map[string]interface{}{
 		"request-detail": map[string]interface{}{
-			"leave-type":        req.LeaveType,
-			"date-from":         req.DateFrom.Format(time.RFC3339),
-			"date-to":           req.DateTo.Format(time.RFC3339),
-			"from-date-morning": req.FromDateMorning,
-			"to-date-morning":   req.ToDateMorning,
-			"remark":            req.Remark,
-			"evidence-files":    files,
-			"request-date":      req.CreatedAt.Format(time.RFC3339),
+			"leave-type": req.LeaveType, "date-from": req.DateFrom.Format(time.RFC3339), "date-to": req.DateTo.Format(time.RFC3339),
+			"from-date-morning": req.FromDateMorning, "to-date-morning": req.ToDateMorning,
+			"remark": req.Remark, "evidence-files": files, "request-date": req.CreatedAt.Format(time.RFC3339),
 		},
 		"approve-detail": map[string]interface{}{
-			"status":       req.Status, // ดึงสถานะปัจจุบันจากใบคำขอ
-			"approve-role": approval.ApproveRole,
-			"approver":     approval.ApproverName,
-			"reason":       approval.Reason,
-			"approve-date": approval.CreatedAt.Format(time.RFC3339),
+			"status": req.Status, "approve-role": app.ApproveRole, "approver": app.ApproverName,
+			"reason": app.Reason, "approve-date": app.CreatedAt.Format(time.RFC3339),
 		},
 	}, nil
 }
 
-// 5. Get Users (ดึงรายชื่อ + Roles)
-func (r *PersonnelRepo) GetUsers() ([]map[string]interface{}, error) {
+// 5. Get Users (หัวหน้าเห็นเฉพาะลูกน้อง หรือ Admin เห็นทุกคน)
+func (r *PersonnelRepo) GetUsers(managerID string) ([]map[string]interface{}, error) {
+	// เช็คว่าเป็น Admin หรือเปล่า
+	var adminCount int64
+	r.db.Table("user_roles ur").Joins("JOIN role r ON ur.role_id = r.role_id").
+		Where("ur.user_id = ? AND r.role_type = ?", managerID, "admin").Count(&adminCount)
+	isAdmin := adminCount > 0
+
+	query := r.db.Table("user_info ui").
+		Select("ui.user_id, ui.fullname_thai, ui.fullname_eng, ui.picture, ui.role_init, r.role_id, r.role_name, r.role_color").
+		Joins("LEFT JOIN user_roles ur ON ui.user_id = ur.user_id").
+		Joins("LEFT JOIN role r ON ur.role_id = r.role_id")
+
+	// 🛡️ ถ้าไม่ใช่ Admin ให้ Filter เอามาแค่ "ลูกน้อง"
+	if !isAdmin {
+		subQuery := r.db.Table("subordinate_manager_roles smr").
+			Select("sr.user_id").
+			Joins("JOIN user_roles mr ON smr.manager_role_id = mr.role_id").
+			Joins("JOIN user_roles sr ON smr.subordinate_role_id = sr.role_id").
+			Where("mr.user_id = ?", managerID)
+		
+		query = query.Where("ui.user_id IN (?)", subQuery)
+	}
+
 	type UserRow struct {
-		UserID       string `gorm:"column:user_id"`
-		FullnameThai string `gorm:"column:fullname_thai"`
-		FullnameEng  string `gorm:"column:fullname_eng"`
-		Picture      string `gorm:"column:picture"`
-		RoleInit     string `gorm:"column:role_init"`
-		RoleID       string `gorm:"column:role_id"`
-		RoleName     string `gorm:"column:role_name"`
-		RoleColor    string `gorm:"column:role_color"`
+		ID string `gorm:"column:user_id"`; NameTh string `gorm:"column:fullname_thai"`; NameEn string `gorm:"column:fullname_eng"`
+		Pic string `gorm:"column:picture"`; InitRole string `gorm:"column:role_init"`; RoleID string; RoleName string; RoleColor string
 	}
-
 	var rows []UserRow
-	// Join 3 ตาราง: user_info -> user_roles -> role
-	err := r.db.Table("user_info u").
-		Select("u.user_id, u.fullname_thai, u.fullname_eng, u.picture, u.role_init, r.role_id, r.role_name, r.role_color").
-		Joins("LEFT JOIN user_roles ur ON u.user_id = ur.user_id").
-		Joins("LEFT JOIN role r ON ur.role_id = r.role_id").
-		Scan(&rows).Error
+	query.Scan(&rows)
 
-	if err != nil {
-		return nil, err
-	}
-
-	// Group ข้อมูล Role ใส่ Array ให้แต่ละ User
+	// แปลงข้อมูลเป็น JSON Format
 	userMap := make(map[string]map[string]interface{})
 	for _, row := range rows {
-		if _, exists := userMap[row.UserID]; !exists {
-			userMap[row.UserID] = map[string]interface{}{
-				"id":           row.UserID,
-				"name-th":      row.FullnameThai,
-				"name-en":      row.FullnameEng,
-				"avatar-url":   row.Picture,
-				"initial-role": row.RoleInit,
-				"roles":        []map[string]string{},
+		if _, exists := userMap[row.ID]; !exists {
+			userMap[row.ID] = map[string]interface{}{
+				"id": row.ID, "name-th": row.NameTh, "name-en": row.NameEn,
+				"avatar-url": row.Pic, "initial-role": row.InitRole, "roles": []map[string]string{},
 			}
 		}
-
 		if row.RoleID != "" {
-			roles := userMap[row.UserID]["roles"].([]map[string]string)
+			roles := userMap[row.ID]["roles"].([]map[string]string)
 			roles = append(roles, map[string]string{
-				"role-id":    row.RoleID,
-				"role-name":  row.RoleName,
-				"role-color": row.RoleColor,
+				"role-id": row.RoleID, "role-name": row.RoleName, "role-color": row.RoleColor,
 			})
-			userMap[row.UserID]["roles"] = roles
+			userMap[row.ID]["roles"] = roles
 		}
 	}
 
@@ -219,7 +213,6 @@ func (r *PersonnelRepo) GetUsers() ([]map[string]interface{}, error) {
 	for _, v := range userMap {
 		results = append(results, v)
 	}
-
 	return results, nil
 }
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"my-app/internal/repository" // ⚠️ แก้ path นี้นะครับ
+	"my-app/internal/repository" // ⚠️ อย่าลืมแก้ Path
 )
 
 type PersonnelHandler struct {
@@ -17,42 +17,47 @@ func NewPersonnelHandler(repo *repository.PersonnelRepo) *PersonnelHandler {
 	return &PersonnelHandler{repo: repo}
 }
 
+// Helper function ดึง user_id จาก JWT Token ของคนส่ง request
+func getManagerID(c *gin.Context) string {
+	// ⚠️ ถ้า JWTMiddleware ลูกพี่เซ็ตคีย์ชื่ออื่น (เช่น "userID") ให้เปลี่ยนให้ตรงนะครับ
+	return c.GetString("user_id") 
+}
+
 func (h *PersonnelHandler) GetPending(c *gin.Context) {
-	id := c.Query("id")
-	res, err := h.repo.GetPending(id)
-	if err != nil || res == nil {
-		c.JSON(http.StatusOK, gin.H{"pending": []interface{}{}})
+	managerID := getManagerID(c)
+	personnelID := c.Query("id")
+
+	res, err := h.repo.GetPending(managerID, personnelID)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "pending": []interface{}{}})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"pending": res})
 }
 
 func (h *PersonnelHandler) GetRecent(c *gin.Context) {
-	id := c.Query("id")
+	managerID := getManagerID(c)
+	personnelID := c.Query("id")
 	startDate := c.Query("startDate")
 	endDate := c.Query("endDate")
 
-	res, err := h.repo.GetRecent(id, startDate, endDate)
-	if err != nil || res == nil {
-		c.JSON(http.StatusOK, gin.H{"recent": []interface{}{}})
+	res, err := h.repo.GetRecent(managerID, personnelID, startDate, endDate)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error(), "recent": []interface{}{}})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"recent": res})
 }
 
 func (h *PersonnelHandler) GetFilterRange(c *gin.Context) {
-	id := c.Query("id")
-	start, end, err := h.repo.GetFilterRange(id)
-	
+	managerID := getManagerID(c)
+	personnelID := c.Query("id")
+
+	start, end, err := h.repo.GetFilterRange(managerID, personnelID)
 	if err != nil || start.IsZero() || end.IsZero() {
-		// ถ้าคนนี้ไม่เคยลาเลย ส่งค่า default กลับไปกันแอพพัง
-		c.JSON(http.StatusOK, gin.H{
-			"start": "2020-01-01T00:00:00.000Z",
-			"end":   "2030-12-31T00:00:00.000Z",
-		})
+		c.JSON(http.StatusForbidden, gin.H{"error": "ไม่มีสิทธิ์ หรือไม่พบข้อมูล"})
 		return
 	}
-	
 	c.JSON(http.StatusOK, gin.H{
 		"start": start.Format("2006-01-02T15:04:05.000Z"),
 		"end":   end.Format("2006-01-02T15:04:05.000Z"),
@@ -60,25 +65,30 @@ func (h *PersonnelHandler) GetFilterRange(c *gin.Context) {
 }
 
 func (h *PersonnelHandler) GetDetail(c *gin.Context) {
+	managerID := getManagerID(c)
 	reqIDStr := c.Query("request-id")
+	
+	// ✂️ หั่นคำว่า LEV ทิ้ง เพื่อให้เหลือแต่เลขไปค้นใน Database
 	idStr := strings.TrimPrefix(reqIDStr, "LEV")
 	reqID, err := strconv.Atoi(idStr)
 	
 	if err != nil || reqID == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID ไม่ถูกต้อง"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID คำขอไม่ถูกต้อง (ต้องเป็น LEV...)"})
 		return
 	}
 
-	res, err := h.repo.GetDetail(reqID)
+	res, err := h.repo.GetDetail(managerID, reqID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบข้อมูลคำขอ"})
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, res)
 }
 
 func (h *PersonnelHandler) GetUsers(c *gin.Context) {
-	res, err := h.repo.GetUsers()
+	managerID := getManagerID(c)
+
+	res, err := h.repo.GetUsers(managerID)
 	if err != nil || res == nil {
 		c.JSON(http.StatusOK, gin.H{"data": []interface{}{}})
 		return
