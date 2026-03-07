@@ -127,3 +127,25 @@ func (h *PersonnelHandler) GetPermissionLevel(c *gin.Context) {
 		"permission-level": level,
 	})
 }
+
+func (h *PersonnelHandler) GetPersonnelData(c *gin.Context) {
+	// ดึง ID ของคนยิง (Manager) ออกมาจาก JWT Token
+	managerID := getManagerID(c)
+	// ดึง ID ลูกน้องที่ต้องการดู จาก URL Query String (?id=xxx)
+	personnelID := c.Query("id")
+
+	if personnelID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ id ของพนักงาน"})
+		return
+	}
+
+	// เรียก Repo เพื่อดึงข้อมูลพร้อมเช็คสิทธิ์
+	res, err := h.repo.GetPersonnelData(managerID, personnelID)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	// โยนผลลัพธ์กลับแบบ 200 OK
+	c.JSON(http.StatusOK, res)
+}

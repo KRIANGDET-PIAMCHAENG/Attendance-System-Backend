@@ -53,7 +53,7 @@ func main() {
 	holidayRepo := repository.NewHolidayRepo(db)
 
 	personnelRepo := repository.NewPersonnelRepo(db)
-    personnelHdl := handler.NewPersonnelHandler(personnelRepo)
+	personnelHdl := handler.NewPersonnelHandler(personnelRepo)
 
 	// ==========================================
 	// 🌟 [NEW] Setup Cron Job (ทำงานหลังบ้าน)
@@ -236,20 +236,22 @@ func main() {
 	}
 
 	manager := r.Group("/manager")
-    manager.Use(middleware.JWTMiddleware()) // แนะนำให้เปิด Middleware ไว้กันคนนอกแอบดู
-    {
-        // ✅ เปลี่ยนจาก api.Group เป็น manager.Group ครับ
-        personnel := manager.Group("/personnel_info") 
-        {
-            personnel.GET("/pending", personnelHdl.GetPending)
-            personnel.GET("/recent", personnelHdl.GetRecent)
-            personnel.GET("/filter_range", personnelHdl.GetFilterRange)
-            personnel.GET("/detail", personnelHdl.GetDetail)
-            personnel.GET("/users", personnelHdl.GetUsers)
+	manager.Use(middleware.JWTMiddleware()) // แนะนำให้เปิด Middleware ไว้กันคนนอกแอบดู
+	{
+		// ✅ เปลี่ยนจาก api.Group เป็น manager.Group ครับ
+		personnel := manager.Group("/personnel_info")
+		{
+			personnel.GET("/pending", personnelHdl.GetPending)
+			personnel.GET("/recent", personnelHdl.GetRecent)
+			personnel.GET("/filter_range", personnelHdl.GetFilterRange)
+			personnel.GET("/detail", personnelHdl.GetDetail)
+			personnel.GET("/users", personnelHdl.GetUsers)
 			personnel.GET("/permissions", personnelHdl.GetPermissionLevel)
+			// 🌟 [NEW] เพิ่มเส้นนี้เข้าไปในกลุ่ม personnel
+			personnel.GET("/personnel_data", personnelHdl.GetPersonnelData)
 
-        }
-    }
+		}
+	}
 
 	// 4. Start Server
 	log.Println("🚀 Server running on http://localhost:3000")

@@ -240,3 +240,73 @@ func (r *PersonnelRepo) CheckApprovalPermission(requesterID string, targetID str
 	if managerCount > 0 { return 1, nil }
 	return 0, nil
 }
+
+
+// 7. Get Personnel Data (ดึงข้อมูลส่วนตัวพนักงานตาม ID)
+func (r *PersonnelRepo) GetPersonnelData(managerID, personnelID string) (map[string]interface{}, error) {
+	// 1. เช็คสิทธิ์ก่อนว่า Manager มีสิทธิ์ดูคนนี้ไหม? (เหมือนเส้นอื่นๆ)
+	if !r.checkPermission(managerID, personnelID) {
+		return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูลของพนักงานท่านนี้")
+	}
+
+	// 2. ดึงข้อมูลพื้นฐานจากตาราง user_info
+	var user struct {
+		UserID       string `gorm:"column:user_id"`
+		EmployeeID   string `gorm:"column:employee_id"`
+		Email        string `gorm:"column:email"`
+		FullnameEng  string `gorm:"column:fullname_eng"`
+		FullnameThai string `gorm:"column:fullname_thai"`
+		Gender       string `gorm:"column:gender"`
+		Nationality  string `gorm:"column:nationality"`
+		Phone        string `gorm:"column:phone"`
+		Picture      string `gorm:"column:picture"`
+		RoleInit     string `gorm:"column:role_init"`
+	}
+
+	if err := r.db.Table("user_info").Where("user_id = ?", personnelID).First(&user).Error; err != nil {
+		return nil, errors.New("ไม่พบข้อมูลพนักงานในระบบ")
+	}
+
+	// 3. ดึงข้อมูล Roles (ตำแหน่งการทำงาน)
+	type RoleData struct {
+		RoleName  string `gorm:"column:role_name"`
+		RoleColor string `gorm:"column:role_color"`
+	}
+	var roleRows []RoleData
+	r.db.Table("user_roles ur").
+		Select("r.role_name, r.role_color").
+		Joins("JOIN role r ON ur.role_id = r.role_id").
+		Where("ur.user_id = ?", personnelID).
+		Scan(&roleRows)
+
+	// แปลงผลลัพธ์ใส่เข้าไปใน Array ของ Roles
+	var roles []map[string]string
+	for _, rr := range roleRows {
+		roles = append(roles, map[string]string{
+			"role-name":  rr.RoleName,
+			"role-color": rr.RoleColor,
+		})
+	}
+
+	// เพิ่ม role_init เข้าไปใน List ด้วย (ถ้ามีข้อมูล) พร้อมกำหนดสีเทาเข้ม
+	if user.RoleInit != "" {
+		roles = append(roles, map[string]string{
+			"role-name":  user.RoleInit,
+			"role-color": "535353",
+		})
+	}
+
+	// 4. ประกอบร่างเป็น JSON ตาม Format ที่ Frontend ต้องการเป๊ะๆ
+	return map[string]interface{}{
+		"user_id":       user.UserID,
+		"employee_id":   user.EmployeeID,
+		"email":         user.Email,
+		"fullname_eng":  user.FullnameEng,
+		"fullname_thai": user.FullnameThai,
+		"gender":        user.Gender,
+		"nationality":   user.Nationality,
+		"phone":         user.Phone,
+		"roles":         roles,
+		"picture":       user.Picture,
+	}, nil
+}
