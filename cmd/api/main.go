@@ -55,6 +55,9 @@ func main() {
 	personnelRepo := repository.NewPersonnelRepo(db)
 	personnelHdl := handler.NewPersonnelHandler(personnelRepo)
 
+	statRepo := repository.NewStatRepo(db)
+    statHdl := handler.NewStatHandler(statRepo)
+
 	// ==========================================
 	// 🌟 [NEW] Setup Cron Job (ทำงานหลังบ้าน)
 	// ==========================================
@@ -252,6 +255,15 @@ func main() {
 
 		}
 	}
+
+	user_api := r.Group("/user")
+    user_api.Use(middleware.JWTMiddleware()) // บังคับแนบ Token
+    {
+        // 🌟 [NEW] เพิ่มเส้น Statistic
+        user_api.GET("/statistic", statHdl.GetUserStatistic)
+		user_api.GET("/statistic/working_hours", statHdl.GetWorkingHoursStatistic)
+		user_api.GET("/statistic/filter_range", statHdl.GetStatisticFilterRange)
+    }
 
 	// 4. Start Server
 	log.Println("🚀 Server running on http://localhost:3000")
