@@ -256,7 +256,7 @@ func main() {
 			personnel.GET("/personnel_data", personnelHdl.GetPersonnelData)
 
 			// 📊 Statistic
-			personnel.GET("/statistic/working_hours", personnelHdl.GetManagerWorkingHoursStatistic)
+			personnel.GET("/statistic/working_hours", personnelHdl.GetWorkingHoursStat)
 			personnel.GET("/statistic/filter_range", personnelHdl.GetManagerStatFilterRange)
 			personnel.GET("/statistic", personnelHdl.GetStatistic)
 

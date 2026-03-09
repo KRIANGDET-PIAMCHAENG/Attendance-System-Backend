@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 	
 	"math"
-	//"strconv"
+	"strconv"
 	"strings"
 
 	"encoding/json"
@@ -428,159 +428,158 @@ func (y YearStat) MarshalJSON() ([]byte, error) {
 	return []byte(str), nil
 }
 
-// 9. Get Working Hours Statistic (ของลูกน้อง)
-func (r *PersonnelRepo) GetManagerWorkingHoursStatistic(managerID, personnelID string) (map[string]interface{}, error) {
+func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) (map[string]interface{}, error) {
+	// 1. 🛡️ เช็คสิทธิ์
 	if !r.checkPermission(managerID, personnelID) {
-		return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูล")
+		return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูลของพนักงานท่านนี้")
 	}
-
-	type AttWorkHour struct {
-		Date     time.Time `gorm:"column:date"`
-		CheckIn  string    `gorm:"column:check_in"`
-		CheckOut string    `gorm:"column:check_out"`
-	}
-	var records []AttWorkHour
-	r.db.Table("attendance").
-		Select("date, check_in::text, check_out::text").
-		Where("user_id = ? AND check_in IS NOT NULL AND check_out IS NOT NULL", personnelID).
-		Scan(&records)
 
 	now := time.Now()
-	currYear, currWeek := now.ISOWeek()
-	currMonth := now.Month()
+	currentYear := now.Year()
+	currentMonth := now.Month()
 
-	var totalHours, weeklyHours, monthlyHours, yearlyHours float64
-	totalMap := make(map[string]float64) // ปี 69, 70 เรียง A-Z ถูกต้องอยู่แล้ว
-	
-	// 🌟 เรียกใช้ Struct แทน Map เพื่อล็อกลำดับฟิลด์
-	var weekStat WeekStat
-	var monthStat MonthStat
-	var yearStat YearStat
+	// 2. 📅 หาวันเริ่มต้นและสิ้นสุดของ Week และ Month
+	offset := int(now.Weekday()) // 0 = Sunday
+	startOfWeek := time.Date(currentYear, currentMonth, now.Day()-offset, 0, 0, 0, 0, time.Local)
+	endOfWeek := startOfWeek.AddDate(0, 0, 6)
 
-	distinctYears, distinctMonths, distinctWeeks := make(map[int]bool), make(map[string]bool), make(map[string]bool)
+	startOfMonth := time.Date(currentYear, currentMonth, 1, 0, 0, 0, 0, time.Local)
+	daysInMonth := startOfMonth.AddDate(0, 1, -1).Day()
+	endOfMonth := time.Date(currentYear, currentMonth, daysInMonth, 0, 0, 0, 0, time.Local)
 
-	for _, rec := range records {
-		inStr := strings.Split(rec.CheckIn, "+")[0]
-		outStr := strings.Split(rec.CheckOut, "+")[0]
+	// 3. 🏖️ โหลดวันหยุดบริษัท/ราชการ
+	var holidays []time.Time
+	r.db.Table("company_holidays").Select("holiday_date").Pluck("holiday_date", &holidays)
+	holidayMap := make(map[string]bool)
+	for _, h := range holidays {
+		holidayMap[h.Format("2006-01-02")] = true
+	}
 
-		inTime, _ := time.Parse("15:04:05", inStr)
-		outTime, _ := time.Parse("15:04:05", outStr)
-		dur := outTime.Sub(inTime).Hours()
-
-		if dur >= 5.0 {
-			dur -= 1.0
-		} // หักพักเที่ยง
-		if dur < 0 {
-			dur = 0
-		}
-		dur = math.Round(dur*100) / 100
-
-		totalHours += dur
-		y, w := rec.Date.ISOWeek()
-		distinctYears[rec.Date.Year()] = true
-		distinctMonths[fmt.Sprintf("%d-%d", rec.Date.Year(), rec.Date.Month())] = true
-		distinctWeeks[fmt.Sprintf("%d-%d", y, w)] = true
-
-		thaiYear := (rec.Date.Year() + 543) % 100
-		totalMap[fmt.Sprintf("%d", thaiYear)] += dur
-
-		// ยัดใส่ตัวแปร WeekStat (จันทร์ - อาทิตย์)
-		if y == currYear && w == currWeek {
-			weeklyHours += dur
-			switch rec.Date.Weekday() {
-			case time.Monday: weekStat.Mon += dur
-			case time.Tuesday: weekStat.Tue += dur
-			case time.Wednesday: weekStat.Wed += dur
-			case time.Thursday: weekStat.Thu += dur
-			case time.Friday: weekStat.Fri += dur
-			case time.Saturday: weekStat.Sat += dur
-			case time.Sunday: weekStat.Sun += dur
-			}
-		}
-		
-		// ยัดใส่ตัวแปร MonthStat (วันที่ 1 - 31)
-		if rec.Date.Year() == now.Year() && rec.Date.Month() == currMonth {
-			monthlyHours += dur
-			switch rec.Date.Day() {
-			case 1: monthStat.D1 += dur
-			case 2: monthStat.D2 += dur
-			case 3: monthStat.D3 += dur
-			case 4: monthStat.D4 += dur
-			case 5: monthStat.D5 += dur
-			case 6: monthStat.D6 += dur
-			case 7: monthStat.D7 += dur
-			case 8: monthStat.D8 += dur
-			case 9: monthStat.D9 += dur
-			case 10: monthStat.D10 += dur
-			case 11: monthStat.D11 += dur
-			case 12: monthStat.D12 += dur
-			case 13: monthStat.D13 += dur
-			case 14: monthStat.D14 += dur
-			case 15: monthStat.D15 += dur
-			case 16: monthStat.D16 += dur
-			case 17: monthStat.D17 += dur
-			case 18: monthStat.D18 += dur
-			case 19: monthStat.D19 += dur
-			case 20: monthStat.D20 += dur
-			case 21: monthStat.D21 += dur
-			case 22: monthStat.D22 += dur
-			case 23: monthStat.D23 += dur
-			case 24: monthStat.D24 += dur
-			case 25: monthStat.D25 += dur
-			case 26: monthStat.D26 += dur
-			case 27: monthStat.D27 += dur
-			case 28: monthStat.D28 += dur
-			case 29: monthStat.D29 += dur
-			case 30: monthStat.D30 += dur
-			case 31: monthStat.D31 += dur
-			}
-		}
-		
-		// ยัดใส่ตัวแปร YearStat (ม.ค. - ธ.ค.)
-		if rec.Date.Year() == now.Year() {
-			yearlyHours += dur
-			switch rec.Date.Month() {
-			case time.January: yearStat.Jan += dur
-			case time.February: yearStat.Feb += dur
-			case time.March: yearStat.Mar += dur
-			case time.April: yearStat.Apr += dur
-			case time.May: yearStat.May += dur
-			case time.June: yearStat.Jun += dur
-			case time.July: yearStat.Jul += dur
-			case time.August: yearStat.Aug += dur
-			case time.September: yearStat.Sep += dur
-			case time.October: yearStat.Oct += dur
-			case time.November: yearStat.Nov += dur
-			case time.December: yearStat.Dec += dur
-			}
+	// 4. 🎯 นับ "วันทำงานจริง" เพื่อเอาไปเป็นตัวหาร Average
+	workingDaysInWeek := 0
+	for d := startOfWeek; !d.After(endOfWeek); d = d.AddDate(0, 0, 1) {
+		if d.Weekday() != time.Saturday && d.Weekday() != time.Sunday && !holidayMap[d.Format("2006-01-02")] {
+			workingDaysInWeek++
 		}
 	}
 
-	var totalAvg, yearlyAvg, monthlyAvg, weeklyAvg float64
-	if len(distinctYears) > 0 {
-		totalAvg = totalHours / float64(len(distinctYears))
-		yearlyAvg = totalAvg
-	}
-	if len(distinctMonths) > 0 {
-		monthlyAvg = totalHours / float64(len(distinctMonths))
-	}
-	if len(distinctWeeks) > 0 {
-		weeklyAvg = totalHours / float64(len(distinctWeeks))
+	workingDaysInMonth := 0
+	for d := startOfMonth; !d.After(endOfMonth); d = d.AddDate(0, 0, 1) {
+		if d.Weekday() != time.Saturday && d.Weekday() != time.Sunday && !holidayMap[d.Format("2006-01-02")] {
+			workingDaysInMonth++
+		}
 	}
 
+	// 5. 📦 สร้าง Map รอรับค่า (เพื่อให้มี Key ครบทุกวัน/ทุกเดือน ส่งไปให้ Frontend)
+	thaiDays := map[time.Weekday]string{
+		time.Sunday: "อา.", time.Monday: "จ.", time.Tuesday: "อ.",
+		time.Wednesday: "พ.", time.Thursday: "พฤ.", time.Friday: "ศ.", time.Saturday: "ส.",
+	}
+	thaiMonths := map[time.Month]string{
+		time.January: "ม.ค.", time.February: "ก.พ.", time.March: "มี.ค.",
+		time.April: "เม.ย.", time.May: "พ.ค.", time.June: "มิ.ย.",
+		time.July: "ก.ค.", time.August: "ส.ค.", time.September: "ก.ย.",
+		time.October: "ต.ค.", time.November: "พ.ย.", time.December: "ธ.ค.",
+	}
+
+	weekMap := map[string]float64{"อา.": 0.0, "จ.": 0.0, "อ.": 0.0, "พ.": 0.0, "พฤ.": 0.0, "ศ.": 0.0, "ส.": 0.0}
+	monthMap := make(map[string]float64)
+	for i := 1; i <= daysInMonth; i++ {
+		monthMap[strconv.Itoa(i)] = 0.0
+	}
+	yearMap := map[string]float64{
+		"ม.ค.": 0.0, "ก.พ.": 0.0, "มี.ค.": 0.0, "เม.ย.": 0.0, "พ.ค.": 0.0, "มิ.ย.": 0.0,
+		"ก.ค.": 0.0, "ส.ค.": 0.0, "ก.ย.": 0.0, "ต.ค.": 0.0, "พ.ย.": 0.0, "ธ.ค.": 0.0,
+	}
+	totalMap := make(map[string]float64)
+
+	var totalWorkingHour, weeklyWorkingHour, monthlyWorkingHour, yearlyWorkingHour float64
+
+	// 6. ⏱️ ดึงข้อมูลและคำนวณ
+	type AttRecord struct {
+		Date     time.Time
+		CheckIn  string `gorm:"column:check_in"`
+		CheckOut string `gorm:"column:check_out"`
+	}
+	var atts []AttRecord
+	r.db.Table("attendance").
+		Select("date, check_in, check_out").
+		Where("user_id = ? AND check_in IS NOT NULL AND check_out IS NOT NULL", personnelID).
+		Scan(&atts)
+
+	for _, att := range atts {
+		// ถ้าเป็นวันหยุด ไม่เอามาคิดชั่วโมง (ปล่อยให้ค่าใน Map เป็น 0.0)
+		if att.Date.Weekday() == time.Saturday || att.Date.Weekday() == time.Sunday || holidayMap[att.Date.Format("2006-01-02")] {
+			continue
+		}
+
+		inTime, errIn := time.Parse("15:04:05", att.CheckIn)
+		outTime, errOut := time.Parse("15:04:05", att.CheckOut)
+		if errIn != nil || errOut != nil {
+			continue
+		}
+
+		// คำนวณเวลา (หักลบกันตรงๆ)
+		duration := outTime.Sub(inTime).Hours()
+		if duration < 0 {
+			duration += 24 // ดักเคสข้ามคืน
+		}
+		duration = math.Round(duration*100) / 100
+
+		// --- Total ---
+		totalWorkingHour += duration
+		buddhistYear := strconv.Itoa(att.Date.Year() + 543)[2:] // ดึงปี พ.ศ. สองตัวท้าย
+		totalMap[buddhistYear] += duration
+
+		// --- Yearly ---
+		if att.Date.Year() == currentYear {
+			yearlyWorkingHour += duration
+			yearMap[thaiMonths[att.Date.Month()]] += duration
+		}
+
+		// --- Monthly ---
+		if att.Date.Year() == currentYear && att.Date.Month() == currentMonth {
+			monthlyWorkingHour += duration
+			dayStr := strconv.Itoa(att.Date.Day())
+			monthMap[dayStr] += duration
+		}
+
+		// --- Weekly ---
+		attDateOnly := time.Date(att.Date.Year(), att.Date.Month(), att.Date.Day(), 0, 0, 0, 0, time.Local)
+		if !attDateOnly.Before(startOfWeek) && !attDateOnly.After(endOfWeek) {
+			weeklyWorkingHour += duration
+			weekMap[thaiDays[att.Date.Weekday()]] += duration
+		}
+	}
+
+	// 7. ⚖️ คำนวณ Average
+	weeklyAverageHour, monthlyAverageHour, yearlyAverageHour, totalAverageHour := 0.0, 0.0, 0.0, 0.0
+
+	if workingDaysInWeek > 0 {
+		weeklyAverageHour = math.Round((weeklyWorkingHour/float64(workingDaysInWeek))*100) / 100
+	}
+	if workingDaysInMonth > 0 {
+		monthlyAverageHour = math.Round((monthlyWorkingHour/float64(workingDaysInMonth))*100) / 100
+	}
+	yearlyAverageHour = math.Round((yearlyWorkingHour/12)*100) / 100
+	if len(totalMap) > 0 {
+		totalAverageHour = math.Round((totalWorkingHour/float64(len(totalMap)))*100) / 100
+	}
+
+	// 8. 🚀 ส่งคืนผลลัพธ์
 	return map[string]interface{}{
-		"total-working-hour":   math.Round(totalHours*100) / 100,
-		"total-average-hour":   math.Round(totalAvg*100) / 100,
-		"weekly-working-hour":  math.Round(weeklyHours*100) / 100,
-		"weekly-average-hour":  math.Round(weeklyAvg*100) / 100,
-		"monthly-working-hour": math.Round(monthlyHours*100) / 100,
-		"monthly-average-hour": math.Round(monthlyAvg*100) / 100,
-		"yearly-working-hour":  math.Round(yearlyHours*100) / 100,
-		"yearly-average-hour":  math.Round(yearlyAvg*100) / 100,
+		"total-working-hour":   math.Round(totalWorkingHour*100) / 100,
+		"total-average-hour":   totalAverageHour,
+		"weekly-working-hour":  math.Round(weeklyWorkingHour*100) / 100,
+		"weekly-average-hour":  weeklyAverageHour,
+		"monthly-working-hour": math.Round(monthlyWorkingHour*100) / 100,
+		"monthly-average-hour": monthlyAverageHour,
+		"yearly-working-hour":  math.Round(yearlyWorkingHour*100) / 100,
+		"yearly-average-hour":  yearlyAverageHour,
 		"total":                totalMap,
-		"week":                 weekStat,  // 🌟 ใช้ Struct ที่จัดเรียงแล้ว
-		"month":                monthStat, // 🌟 ใช้ Struct ที่จัดเรียงแล้ว
-		"year":                 yearStat,  // 🌟 ใช้ Struct ที่จัดเรียงแล้ว
+		"week":                 weekMap,
+		"month":                monthMap,
+		"year":                 yearMap,
 	}, nil
 }
 

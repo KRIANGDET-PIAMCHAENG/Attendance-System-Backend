@@ -150,13 +150,22 @@ func (h *PersonnelHandler) GetPersonnelData(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
-// 🌟 Statistic (Working Hours)
-func (h *PersonnelHandler) GetManagerWorkingHoursStatistic(c *gin.Context) {
-	managerID := getManagerID(c)
+// รับ Request เส้น GET /manager/personnel_info/statistic/working_hours
+func (h *PersonnelHandler) GetWorkingHoursStat(c *gin.Context) {
+	managerID := getManagerID(c) // ดึงจาก Token
 	personnelID := c.Query("id")
-	if personnelID == "" { c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ id"}); return }
-	res, err := h.repo.GetManagerWorkingHoursStatistic(managerID, personnelID)
-	if err != nil { c.JSON(http.StatusForbidden, gin.H{"error": err.Error()}); return }
+
+	if personnelID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ id พนักงาน"})
+		return
+	}
+
+	res, err := h.repo.GetWorkingHoursStatistic(managerID, personnelID)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
 	c.JSON(http.StatusOK, res)
 }
 
