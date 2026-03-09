@@ -114,86 +114,105 @@ func (r *PersonnelRepo) GetFilterRange(managerID, personnelID string) (time.Time
 		Scan(&res).Error
 	return res.Start, res.End, err
 }
+
 // 4. Get Detail (ตัดตัวอักษร LEV มาจาก Handler แล้ว)
 func (r *PersonnelRepo) GetDetail(managerID string, reqID int) (map[string]interface{}, error) {
-    // ดึง UserID ของใบคำขอนี้ออกมาก่อน เพื่อเช็คสิทธิ์
-    var req struct {
-        UserID string `gorm:"column:user_id"`
-        LeaveType string `gorm:"column:leave_type"`; DateFrom time.Time `gorm:"column:date_from"`
-        DateTo time.Time `gorm:"column:date_to"`; FromDateMorning bool `gorm:"column:from_date_morning"`
-        ToDateMorning bool `gorm:"column:to_date_morning"`; Remark string `gorm:"column:remark"`
-        CreatedAt time.Time `gorm:"column:created_at"`; Status string `gorm:"column:status"`
-    }
-    if err := r.db.Table("leave_requests").Where("id = ?", reqID).First(&req).Error; err != nil {
-        return nil, errors.New("ไม่พบใบคำขอนี้")
-    }
+	// ดึง UserID ของใบคำขอนี้ออกมาก่อน เพื่อเช็คสิทธิ์
+	var req struct {
+		UserID          string    `gorm:"column:user_id"`
+		LeaveType       string    `gorm:"column:leave_type"`
+		DateFrom        time.Time `gorm:"column:date_from"`
+		DateTo          time.Time `gorm:"column:date_to"`
+		FromDateMorning bool      `gorm:"column:from_date_morning"`
+		ToDateMorning   bool      `gorm:"column:to_date_morning"`
+		Remark          string    `gorm:"column:remark"`
+		CreatedAt       time.Time `gorm:"column:created_at"`
+		Status          string    `gorm:"column:status"`
+	}
+	if err := r.db.Table("leave_requests").Where("id = ?", reqID).First(&req).Error; err != nil {
+		return nil, errors.New("ไม่พบใบคำขอนี้")
+	}
 
-    // 🛡️ เช็คสิทธิ์
-    if !r.checkPermission(managerID, req.UserID) {
-        return nil, errors.New("unauthorized: คุณไม่มีสิทธิ์ดูรายละเอียดใบคำขอของพนักงานท่านนี้")
-    }
+	// 🛡️ เช็คสิทธิ์
+	if !r.checkPermission(managerID, req.UserID) {
+		return nil, errors.New("unauthorized: คุณไม่มีสิทธิ์ดูรายละเอียดใบคำขอของพนักงานท่านนี้")
+	}
 
-    // 🌟 [แก้ตรงนี้] ดึงข้อมูลไฟล์แนบมาเก็บไว้ก่อน
-    var files []map[string]interface{}
-    r.db.Table("leave_attachments").Where("leave_request_id = ?", reqID).
-        Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").
-        Find(&files)
+	// 🌟 [แก้ตรงนี้] บังคับเป็น Array ว่าง เพื่อไม่ให้ Frontend เจอค่า null กรณีไม่มีไฟล์แนบ
+	files := []map[string]interface{}{}
+	r.db.Table("leave_attachments").Where("leave_request_id = ?", reqID).
+		Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").
+		Find(&files)
 
-    // 🌟 [เพิ่มตรงนี้] วน Loop เติม Base URL ให้เป็น Link เต็ม
-    // ⚠️ ถ้าขึ้น Production จริงๆ แนะนำให้ดึงจาก os.Getenv("BASE_URL") นะครับ
-    baseURL := "http://20.194.9.179:3000/" 
-    for i := range files {
-        if path, ok := files[i]["file-url"].(string); ok && path != "" {
-            // เช็คกันเหนียว ถ้าใน DB มันไม่ได้ขึ้นต้นด้วย http:// (แปลว่าเป็น Path สั้น) ให้เติม baseURL นำหน้า
-            if len(path) < 4 || path[:4] != "http" {
-                // ลบ / ด้านหน้าสุดออก (ถ้ามี) เพื่อไม่ให้ http://20.194.9.179:3000//uploads slash เบิ้ล
-                if path[0] == '/' {
-                    path = path[1:]
-                }
-                files[i]["file-url"] = baseURL + path
-            }
-        }
-    }
+	// วน Loop เติม Base URL ให้เป็น Link เต็ม
+	baseURL := "http://20.194.9.179:3000/"
+	for i := range files {
+		if path, ok := files[i]["file-url"].(string); ok && path != "" {
+			if len(path) < 4 || path[:4] != "http" {
+				if path[0] == '/' {
+					path = path[1:]
+				}
+				files[i]["file-url"] = baseURL + path
+			}
+		}
+	}
 
-   // (ดึงข้อมูลการอนุมัติ)
-    var app struct {
-        ApproverName string `gorm:"column:approver_name"`
-        ApproveRole  string `gorm:"column:approve_role"`
-        Reason       string `gorm:"column:reason"`
-        CreatedAt    time.Time `gorm:"column:created_at"`
-    }
-    r.db.Table("leave_approvals").Where("leave_request_id = ?", reqID).First(&app)
+	// (ดึงข้อมูลการอนุมัติ)
+	var app struct {
+		ApproverName string    `gorm:"column:approver_name"`
+		ApproveRole  string    `gorm:"column:approve_role"`
+		Reason       string    `gorm:"column:reason"`
+		CreatedAt    time.Time `gorm:"column:created_at"`
+	}
+	r.db.Table("leave_approvals").Where("leave_request_id = ?", reqID).First(&app)
 
-    // 🌟 [NEW] ถ้ายังไม่มีคนอนุมัติ ให้ไปหาว่า "ตำแหน่งอะไร" ที่ต้องเป็นคนกด Approve (role_type = 'main')
-    if app.ApproveRole == "" {
-        var expectedRoleName string
-        r.db.Table("subordinate_manager_roles smr").
-            Select("r.role_name").
-            Joins("JOIN role r ON smr.manager_role_id = r.role_id").
-            Where("smr.subordinate_id = ? AND r.role_type = ?", req.UserID, "main").
-            Limit(1).
-            Scan(&expectedRoleName)
-        
-        // ยัดชื่อตำแหน่งที่หาเจอใส่กลับเข้าไป
-        app.ApproveRole = expectedRoleName
-    }
+	// ถ้ายังไม่มีคนอนุมัติ ให้ไปหาว่า "ตำแหน่งอะไร" ที่ต้องเป็นคนกด Approve (role_type = 'main')
+	if app.ApproveRole == "" {
+		var expectedRoleName string
+		r.db.Table("subordinate_manager_roles smr").
+			Select("r.role_name").
+			Joins("JOIN role r ON smr.manager_role_id = r.role_id").
+			Where("smr.subordinate_id = ? AND r.role_type = ?", req.UserID, "main").
+			Limit(1).
+			Scan(&expectedRoleName)
 
-    // ประกอบร่าง JSON ส่งกลับ
-    return map[string]interface{}{
-        "request-detail": map[string]interface{}{
-            "leave-type": req.LeaveType, "date-from": req.DateFrom.Format(time.RFC3339), "date-to": req.DateTo.Format(time.RFC3339),
-            "from-date-morning": req.FromDateMorning, "to-date-morning": req.ToDateMorning,
-            "remark": req.Remark, "evidence-files": files, "request-date": req.CreatedAt.Format(time.RFC3339),
-        },
-        "approve-detail": map[string]interface{}{
-            "status": req.Status, 
-            "approve-role": app.ApproveRole, // 👈 ตรงนี้จะกลายเป็นชื่อตำแหน่งหัวหน้า (main) ทันที
-            "approver": app.ApproverName,
-            "reason": app.Reason, 
-            "approve-date": app.CreatedAt.Format(time.RFC3339),
-        },
-    }, nil
+		app.ApproveRole = expectedRoleName
+	}
+
+	// 🌟 [NEW LOGIC] ตรรกะเช็คสถานะ overdue
+	finalStatus := req.Status
+	if finalStatus == "pending" && req.DateFrom.Before(time.Now()) {
+		finalStatus = "overdue" // เปลี่ยนสถานะเป็นเลยกำหนด ถ้าถึงวันลาแล้วยังไม่มีใครอนุมัติ
+	}
+
+	// 🌟 ดักค่า 0001-01-01 ถ้ายังไม่มีประวัติการอนุมัติ ให้ส่งกลับเป็น null
+	var approveDateStr interface{} = nil
+	if !app.CreatedAt.IsZero() {
+		approveDateStr = app.CreatedAt.Format(time.RFC3339)
+	}
+
+	// ประกอบร่าง JSON ส่งกลับ
+	return map[string]interface{}{
+		"request-detail": map[string]interface{}{
+			"leave-type":        req.LeaveType,
+			"date-from":         req.DateFrom.Format(time.RFC3339),
+			"date-to":           req.DateTo.Format(time.RFC3339),
+			"from-date-morning": req.FromDateMorning,
+			"to-date-morning":   req.ToDateMorning,
+			"remark":            req.Remark,
+			"evidence-files":    files,
+			"request-date":      req.CreatedAt.Format(time.RFC3339),
+		},
+		"approve-detail": map[string]interface{}{
+			"status":       finalStatus,     // 👈 ยัดค่า overdue หรือสถานะจริงกลับไป
+			"approve-role": app.ApproveRole,
+			"approver":     app.ApproverName,
+			"reason":       app.Reason,
+			"approve-date": approveDateStr,  // 👈 จะกลายเป็น null ใน JSON ถ้ายังไม่มีคนอนุมัติ
+		},
+	}, nil
 }
+
 // 5. Get Users (หัวหน้าเห็นเฉพาะลูกน้อง หรือ Admin เห็นทุกคน)
 func (r *PersonnelRepo) GetUsers(managerID string) ([]map[string]interface{}, error) {
     // เช็คว่าเป็น Admin หรือเปล่า
