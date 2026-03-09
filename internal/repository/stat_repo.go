@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	"math"
-	"strconv"
+	//"strconv"
 	"strings"
 
 )
@@ -235,8 +235,8 @@ func (r *StatRepo) GetUserStatistic(userID string, year int) (map[string]interfa
 	}, nil
 }
 
+// 🌟 Get Working Hours Statistic (สถิติชั่วโมงการทำงาน สำหรับพนักงานดูของตัวเอง)
 func (r *StatRepo) GetWorkingHoursStatistic(userID string) (map[string]interface{}, error) {
-	// ดึงข้อมูลการเข้า-ออกงานที่มีทั้ง check_in และ check_out
 	type AttWorkHour struct {
 		Date     time.Time `gorm:"column:date"`
 		CheckIn  string    `gorm:"column:check_in"`
@@ -252,84 +252,89 @@ func (r *StatRepo) GetWorkingHoursStatistic(userID string) (map[string]interface
 	currYear, currWeek := now.ISOWeek()
 	currMonth := now.Month()
 
-	// ตัวแปรเก็บผลรวม
 	var totalHours, weeklyHours, monthlyHours, yearlyHours float64
-
-	// เตรียม Map สำหรับจัดกลุ่ม
 	totalMap := make(map[string]float64)
-	weekMap := map[string]float64{"อา.": 0, "จ.": 0, "อ.": 0, "พ.": 0, "พฤ.": 0, "ศ.": 0, "ส.": 0}
-	monthMap := make(map[string]float64)
-	for i := 1; i <= 31; i++ {
-		monthMap[strconv.Itoa(i)] = 0
-	}
-	yearMap := map[string]float64{"ม.ค.": 0, "ก.พ.": 0, "มี.ค.": 0, "เม.ย.": 0, "พ.ค.": 0, "มิ.ย.": 0, "ก.ค.": 0, "ส.ค.": 0, "ก.ย.": 0, "ต.ค.": 0, "พ.ย.": 0, "ธ.ค.": 0}
 
-	distinctYears := make(map[int]bool)
-	distinctMonths := make(map[string]bool)
-	distinctWeeks := make(map[string]bool)
+	// 🌟 เรียกใช้ Struct ที่เราประกาศไว้แล้ว เพื่อล็อกลำดับฟิลด์เวลาแปลงเป็น JSON
+	var weekStat WeekStat
+	var monthStat MonthStat
+	var yearStat YearStat
 
-	thaiDays := []string{"อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."}
-	thaiMonths := []string{"ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."}
+	distinctYears, distinctMonths, distinctWeeks := make(map[int]bool), make(map[string]bool), make(map[string]bool)
 
 	for _, rec := range records {
-		// หั่นเอาแค่ 08:30:00 (เผื่อข้อมูลมาเป็น 08:30:00+00)
 		inStr := strings.Split(rec.CheckIn, "+")[0]
 		outStr := strings.Split(rec.CheckOut, "+")[0]
 
-		// แปลงเวลา (Format "15:04:05")
-		inTime, errIn := time.Parse("15:04:05", inStr)
-		outTime, errOut := time.Parse("15:04:05", outStr)
-		
-		// เผื่อข้อมูลเก็บบางทีมาแบบ "15:04"
-		if errIn != nil { inTime, _ = time.Parse("15:04", inStr) }
-		if errOut != nil { outTime, _ = time.Parse("15:04", outStr) }
-
+		inTime, _ := time.Parse("15:04:05", inStr)
+		outTime, _ := time.Parse("15:04:05", outStr)
 		dur := outTime.Sub(inTime).Hours()
-		
-		// 🌟 หักพักเที่ยง (ถ้าทำงานเกิน 5 ชั่วโมง ให้หักออก 1 ชม.)
+
 		if dur >= 5.0 {
 			dur -= 1.0
-		}
+		} // หักพักเที่ยง
 		if dur < 0 {
 			dur = 0
 		}
-
-		dur = math.Round(dur*100) / 100 // ปัดเศษ 2 ตำแหน่ง
+		dur = math.Round(dur*100) / 100
 
 		totalHours += dur
 		y, w := rec.Date.ISOWeek()
-		
 		distinctYears[rec.Date.Year()] = true
 		distinctMonths[fmt.Sprintf("%d-%d", rec.Date.Year(), rec.Date.Month())] = true
 		distinctWeeks[fmt.Sprintf("%d-%d", y, w)] = true
 
-		// จัดกลุ่มตามปี พ.ศ. 2 ตัวท้าย เช่น 2026+543 = 2569 -> "69"
 		thaiYear := (rec.Date.Year() + 543) % 100
 		totalMap[fmt.Sprintf("%d", thaiYear)] += dur
 
-		// สถิติสัปดาห์ปัจจุบัน
+		// ยัดใส่ตัวแปร WeekStat (จันทร์ - อาทิตย์)
 		if y == currYear && w == currWeek {
 			weeklyHours += dur
-			dayIdx := int(rec.Date.Weekday()) // 0=Sunday
-			weekMap[thaiDays[dayIdx]] += dur
+			switch rec.Date.Weekday() {
+			case time.Monday: weekStat.Mon += dur
+			case time.Tuesday: weekStat.Tue += dur
+			case time.Wednesday: weekStat.Wed += dur
+			case time.Thursday: weekStat.Thu += dur
+			case time.Friday: weekStat.Fri += dur
+			case time.Saturday: weekStat.Sat += dur
+			case time.Sunday: weekStat.Sun += dur
+			}
 		}
 
-		// สถิติเดือนปัจจุบัน
+		// ยัดใส่ตัวแปร MonthStat (วันที่ 1 - 31)
 		if rec.Date.Year() == now.Year() && rec.Date.Month() == currMonth {
 			monthlyHours += dur
-			dayStr := strconv.Itoa(rec.Date.Day())
-			monthMap[dayStr] += dur
+			switch rec.Date.Day() {
+			case 1: monthStat.D1 += dur; case 2: monthStat.D2 += dur; case 3: monthStat.D3 += dur; case 4: monthStat.D4 += dur; case 5: monthStat.D5 += dur
+			case 6: monthStat.D6 += dur; case 7: monthStat.D7 += dur; case 8: monthStat.D8 += dur; case 9: monthStat.D9 += dur; case 10: monthStat.D10 += dur
+			case 11: monthStat.D11 += dur; case 12: monthStat.D12 += dur; case 13: monthStat.D13 += dur; case 14: monthStat.D14 += dur; case 15: monthStat.D15 += dur
+			case 16: monthStat.D16 += dur; case 17: monthStat.D17 += dur; case 18: monthStat.D18 += dur; case 19: monthStat.D19 += dur; case 20: monthStat.D20 += dur
+			case 21: monthStat.D21 += dur; case 22: monthStat.D22 += dur; case 23: monthStat.D23 += dur; case 24: monthStat.D24 += dur; case 25: monthStat.D25 += dur
+			case 26: monthStat.D26 += dur; case 27: monthStat.D27 += dur; case 28: monthStat.D28 += dur; case 29: monthStat.D29 += dur; case 30: monthStat.D30 += dur
+			case 31: monthStat.D31 += dur
+			}
 		}
 
-		// สถิติปีปัจจุบัน
+		// ยัดใส่ตัวแปร YearStat (ม.ค. - ธ.ค.)
 		if rec.Date.Year() == now.Year() {
 			yearlyHours += dur
-			monthIdx := int(rec.Date.Month()) - 1
-			yearMap[thaiMonths[monthIdx]] += dur
+			switch rec.Date.Month() {
+			case time.January: yearStat.Jan += dur
+			case time.February: yearStat.Feb += dur
+			case time.March: yearStat.Mar += dur
+			case time.April: yearStat.Apr += dur
+			case time.May: yearStat.May += dur
+			case time.June: yearStat.Jun += dur
+			case time.July: yearStat.Jul += dur
+			case time.August: yearStat.Aug += dur
+			case time.September: yearStat.Sep += dur
+			case time.October: yearStat.Oct += dur
+			case time.November: yearStat.Nov += dur
+			case time.December: yearStat.Dec += dur
+			}
 		}
 	}
 
-	// คำนวณค่าเฉลี่ย
 	var totalAvg, yearlyAvg, monthlyAvg, weeklyAvg float64
 	if len(distinctYears) > 0 {
 		totalAvg = totalHours / float64(len(distinctYears))
@@ -342,7 +347,6 @@ func (r *StatRepo) GetWorkingHoursStatistic(userID string) (map[string]interface
 		weeklyAvg = totalHours / float64(len(distinctWeeks))
 	}
 
-	// ประกอบร่าง JSON ส่งกลับไป
 	return map[string]interface{}{
 		"total-working-hour":   math.Round(totalHours*100) / 100,
 		"total-average-hour":   math.Round(totalAvg*100) / 100,
@@ -353,9 +357,9 @@ func (r *StatRepo) GetWorkingHoursStatistic(userID string) (map[string]interface
 		"yearly-working-hour":  math.Round(yearlyHours*100) / 100,
 		"yearly-average-hour":  math.Round(yearlyAvg*100) / 100,
 		"total":                totalMap,
-		"week":                 weekMap,
-		"month":                monthMap,
-		"year":                 yearMap,
+		"week":                 weekStat,  // 🌟 บังคับเรียงลำดับด้วย Struct
+		"month":                monthStat, // 🌟 บังคับเรียงลำดับด้วย Struct
+		"year":                 yearStat,  // 🌟 บังคับเรียงลำดับด้วย Struct
 	}, nil
 }
 

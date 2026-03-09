@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 	
 	"math"
-	"strconv"
+	//"strconv"
 	"strings"
 
 	"encoding/json"
@@ -342,6 +342,45 @@ func (r *PersonnelRepo) GetPersonnelData(managerID, personnelID string) (map[str
 // 🌟 หมวด Statistic & Working Hours
 // ==========================================
 
+// ==========================================
+// 🌟 หมวด Statistic & Working Hours
+// ==========================================
+
+// ประกาศ Struct เพื่อ "บังคับลำดับ" การแสดงผล JSON
+type WeekStat struct {
+	Mon float64 `json:"จ."`
+	Tue float64 `json:"อ."`
+	Wed float64 `json:"พ."`
+	Thu float64 `json:"พฤ."`
+	Fri float64 `json:"ศ."`
+	Sat float64 `json:"ส."`
+	Sun float64 `json:"อา."`
+}
+
+type MonthStat struct {
+	D1 float64 `json:"1"`; D2 float64 `json:"2"`; D3 float64 `json:"3"`; D4 float64 `json:"4"`; D5 float64 `json:"5"`
+	D6 float64 `json:"6"`; D7 float64 `json:"7"`; D8 float64 `json:"8"`; D9 float64 `json:"9"`; D10 float64 `json:"10"`
+	D11 float64 `json:"11"`; D12 float64 `json:"12"`; D13 float64 `json:"13"`; D14 float64 `json:"14"`; D15 float64 `json:"15"`
+	D16 float64 `json:"16"`; D17 float64 `json:"17"`; D18 float64 `json:"18"`; D19 float64 `json:"19"`; D20 float64 `json:"20"`
+	D21 float64 `json:"21"`; D22 float64 `json:"22"`; D23 float64 `json:"23"`; D24 float64 `json:"24"`; D25 float64 `json:"25"`
+	D26 float64 `json:"26"`; D27 float64 `json:"27"`; D28 float64 `json:"28"`; D29 float64 `json:"29"`; D30 float64 `json:"30"`; D31 float64 `json:"31"`
+}
+
+type YearStat struct {
+	Jan float64 `json:"ม.ค."`
+	Feb float64 `json:"ก.พ."`
+	Mar float64 `json:"มี.ค."`
+	Apr float64 `json:"เม.ย."`
+	May float64 `json:"พ.ค."`
+	Jun float64 `json:"มิ.ย."`
+	Jul float64 `json:"ก.ค."`
+	Aug float64 `json:"ส.ค."`
+	Sep float64 `json:"ก.ย."`
+	Oct float64 `json:"ต.ค."`
+	Nov float64 `json:"พ.ย."`
+	Dec float64 `json:"ธ.ค."`
+}
+
 // 9. Get Working Hours Statistic (ของลูกน้อง)
 func (r *PersonnelRepo) GetManagerWorkingHoursStatistic(managerID, personnelID string) (map[string]interface{}, error) {
 	if !r.checkPermission(managerID, personnelID) {
@@ -364,15 +403,14 @@ func (r *PersonnelRepo) GetManagerWorkingHoursStatistic(managerID, personnelID s
 	currMonth := now.Month()
 
 	var totalHours, weeklyHours, monthlyHours, yearlyHours float64
-	totalMap := make(map[string]float64)
-	weekMap := map[string]float64{"อา.": 0, "จ.": 0, "อ.": 0, "พ.": 0, "พฤ.": 0, "ศ.": 0, "ส.": 0}
-	monthMap := make(map[string]float64)
-	for i := 1; i <= 31; i++ { monthMap[strconv.Itoa(i)] = 0 }
-	yearMap := map[string]float64{"ม.ค.": 0, "ก.พ.": 0, "มี.ค.": 0, "เม.ย.": 0, "พ.ค.": 0, "มิ.ย.": 0, "ก.ค.": 0, "ส.ค.": 0, "ก.ย.": 0, "ต.ค.": 0, "พ.ย.": 0, "ธ.ค.": 0}
+	totalMap := make(map[string]float64) // ปี 69, 70 เรียง A-Z ถูกต้องอยู่แล้ว
+	
+	// 🌟 เรียกใช้ Struct แทน Map เพื่อล็อกลำดับฟิลด์
+	var weekStat WeekStat
+	var monthStat MonthStat
+	var yearStat YearStat
 
 	distinctYears, distinctMonths, distinctWeeks := make(map[int]bool), make(map[string]bool), make(map[string]bool)
-	thaiDays := []string{"อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."}
-	thaiMonths := []string{"ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."}
 
 	for _, rec := range records {
 		inStr := strings.Split(rec.CheckIn, "+")[0]
@@ -381,9 +419,13 @@ func (r *PersonnelRepo) GetManagerWorkingHoursStatistic(managerID, personnelID s
 		inTime, _ := time.Parse("15:04:05", inStr)
 		outTime, _ := time.Parse("15:04:05", outStr)
 		dur := outTime.Sub(inTime).Hours()
-		
-		if dur >= 5.0 { dur -= 1.0 } // หักพักเที่ยง
-		if dur < 0 { dur = 0 }
+
+		if dur >= 5.0 {
+			dur -= 1.0
+		} // หักพักเที่ยง
+		if dur < 0 {
+			dur = 0
+		}
 		dur = math.Round(dur*100) / 100
 
 		totalHours += dur
@@ -395,31 +437,103 @@ func (r *PersonnelRepo) GetManagerWorkingHoursStatistic(managerID, personnelID s
 		thaiYear := (rec.Date.Year() + 543) % 100
 		totalMap[fmt.Sprintf("%d", thaiYear)] += dur
 
+		// ยัดใส่ตัวแปร WeekStat (จันทร์ - อาทิตย์)
 		if y == currYear && w == currWeek {
 			weeklyHours += dur
-			weekMap[thaiDays[int(rec.Date.Weekday())]] += dur
+			switch rec.Date.Weekday() {
+			case time.Monday: weekStat.Mon += dur
+			case time.Tuesday: weekStat.Tue += dur
+			case time.Wednesday: weekStat.Wed += dur
+			case time.Thursday: weekStat.Thu += dur
+			case time.Friday: weekStat.Fri += dur
+			case time.Saturday: weekStat.Sat += dur
+			case time.Sunday: weekStat.Sun += dur
+			}
 		}
+		
+		// ยัดใส่ตัวแปร MonthStat (วันที่ 1 - 31)
 		if rec.Date.Year() == now.Year() && rec.Date.Month() == currMonth {
 			monthlyHours += dur
-			monthMap[strconv.Itoa(rec.Date.Day())] += dur
+			switch rec.Date.Day() {
+			case 1: monthStat.D1 += dur
+			case 2: monthStat.D2 += dur
+			case 3: monthStat.D3 += dur
+			case 4: monthStat.D4 += dur
+			case 5: monthStat.D5 += dur
+			case 6: monthStat.D6 += dur
+			case 7: monthStat.D7 += dur
+			case 8: monthStat.D8 += dur
+			case 9: monthStat.D9 += dur
+			case 10: monthStat.D10 += dur
+			case 11: monthStat.D11 += dur
+			case 12: monthStat.D12 += dur
+			case 13: monthStat.D13 += dur
+			case 14: monthStat.D14 += dur
+			case 15: monthStat.D15 += dur
+			case 16: monthStat.D16 += dur
+			case 17: monthStat.D17 += dur
+			case 18: monthStat.D18 += dur
+			case 19: monthStat.D19 += dur
+			case 20: monthStat.D20 += dur
+			case 21: monthStat.D21 += dur
+			case 22: monthStat.D22 += dur
+			case 23: monthStat.D23 += dur
+			case 24: monthStat.D24 += dur
+			case 25: monthStat.D25 += dur
+			case 26: monthStat.D26 += dur
+			case 27: monthStat.D27 += dur
+			case 28: monthStat.D28 += dur
+			case 29: monthStat.D29 += dur
+			case 30: monthStat.D30 += dur
+			case 31: monthStat.D31 += dur
+			}
 		}
+		
+		// ยัดใส่ตัวแปร YearStat (ม.ค. - ธ.ค.)
 		if rec.Date.Year() == now.Year() {
 			yearlyHours += dur
-			yearMap[thaiMonths[int(rec.Date.Month())-1]] += dur
+			switch rec.Date.Month() {
+			case time.January: yearStat.Jan += dur
+			case time.February: yearStat.Feb += dur
+			case time.March: yearStat.Mar += dur
+			case time.April: yearStat.Apr += dur
+			case time.May: yearStat.May += dur
+			case time.June: yearStat.Jun += dur
+			case time.July: yearStat.Jul += dur
+			case time.August: yearStat.Aug += dur
+			case time.September: yearStat.Sep += dur
+			case time.October: yearStat.Oct += dur
+			case time.November: yearStat.Nov += dur
+			case time.December: yearStat.Dec += dur
+			}
 		}
 	}
 
 	var totalAvg, yearlyAvg, monthlyAvg, weeklyAvg float64
-	if len(distinctYears) > 0 { totalAvg = totalHours / float64(len(distinctYears)); yearlyAvg = totalAvg }
-	if len(distinctMonths) > 0 { monthlyAvg = totalHours / float64(len(distinctMonths)) }
-	if len(distinctWeeks) > 0 { weeklyAvg = totalHours / float64(len(distinctWeeks)) }
+	if len(distinctYears) > 0 {
+		totalAvg = totalHours / float64(len(distinctYears))
+		yearlyAvg = totalAvg
+	}
+	if len(distinctMonths) > 0 {
+		monthlyAvg = totalHours / float64(len(distinctMonths))
+	}
+	if len(distinctWeeks) > 0 {
+		weeklyAvg = totalHours / float64(len(distinctWeeks))
+	}
 
 	return map[string]interface{}{
-		"total-working-hour": math.Round(totalHours*100) / 100, "total-average-hour": math.Round(totalAvg*100) / 100,
-		"weekly-working-hour": math.Round(weeklyHours*100) / 100, "weekly-average-hour": math.Round(weeklyAvg*100) / 100,
-		"monthly-working-hour": math.Round(monthlyHours*100) / 100, "monthly-average-hour": math.Round(monthlyAvg*100) / 100,
-		"yearly-working-hour": math.Round(yearlyHours*100) / 100, "yearly-average-hour": math.Round(yearlyAvg*100) / 100,
-		"total": totalMap, "week": weekMap, "month": monthMap, "year": yearMap,
+		"total-working-hour":   math.Round(totalHours*100) / 100,
+		"total-average-hour":   math.Round(totalAvg*100) / 100,
+		"weekly-working-hour":  math.Round(weeklyHours*100) / 100,
+		"weekly-average-hour":  math.Round(weeklyAvg*100) / 100,
+		"monthly-working-hour": math.Round(monthlyHours*100) / 100,
+		"monthly-average-hour": math.Round(monthlyAvg*100) / 100,
+		"yearly-working-hour":  math.Round(yearlyHours*100) / 100,
+		"yearly-average-hour":  math.Round(yearlyAvg*100) / 100,
+		"total":                totalMap,
+		"week":                 weekStat,  // 🌟 ใช้ Struct ที่จัดเรียงแล้ว
+		"month":                monthStat, // 🌟 ใช้ Struct ที่จัดเรียงแล้ว
+		"year":                 yearStat,  // 🌟 ใช้ Struct ที่จัดเรียงแล้ว
 	}, nil
 }
 
