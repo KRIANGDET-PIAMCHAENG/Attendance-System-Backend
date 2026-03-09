@@ -229,40 +229,36 @@ func (h *LeaveHandler) GetLeaveFilterRange(c *gin.Context) {
 }
 
 func (h *LeaveHandler) GetLeaveDetail(c *gin.Context) {
-	userID := c.MustGet("user_id").(string)
+    userID := c.MustGet("user_id").(string)
 
-	// 1. รับ ID จาก Query (เช่น ?request-id=LEV000000000015)
-	reqIDStr := c.Query("request-id")
-	if len(reqIDStr) <= 3 || reqIDStr[:3] != "LEV" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID ไม่ถูกต้อง"})
-		return
-	}
+    reqIDStr := c.Query("request-id")
+    if len(reqIDStr) <= 3 || reqIDStr[:3] != "LEV" {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID ไม่ถูกต้อง"})
+        return
+    }
 
-	// 2. ตัด "LEV" ออก และแปลง 000000000015 เป็นตัวเลข
-	leaveID, err := strconv.Atoi(reqIDStr[3:])
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID ใบลาไม่ถูกต้อง"})
-		return
-	}
+    leaveID, err := strconv.Atoi(reqIDStr[3:])
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "ID ใบลาไม่ถูกต้อง"})
+        return
+    }
 
-	// 3. ดึงข้อมูลจาก Repository
-	detail, attachments, err := h.repo.GetLeaveDetail(userID, leaveID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบข้อมูลใบลา"})
-		return
-	}
+    detail, attachments, err := h.repo.GetLeaveDetail(userID, leaveID)
+    if err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบข้อมูลใบลา"})
+        return
+    }
 
-	// 4. ตั้งค่า Timezone ไทย
-	loc, err := time.LoadLocation("Asia/Bangkok")
-	if err != nil {
-		loc = time.FixedZone("UTC+7", 7*60*60)
-	}
+    loc, err := time.LoadLocation("Asia/Bangkok")
+    if err != nil {
+        loc = time.FixedZone("UTC+7", 7*60*60)
+    }
 
-	// ตรรกะเช็คสถานะ overdue
-	finalStatus := detail.Status
-	if finalStatus == "pending" && detail.DateFrom.Before(time.Now()) {
-		finalStatus = "overdue"
-	}
+    // 🌟 ตรรกะเช็คสถานะ overdue (เหมือนฝั่ง Personnel)
+    finalStatus := detail.Status
+    if finalStatus == "pending" && detail.DateFrom.Before(time.Now()) {
+        finalStatus = "overdue"
+    }
 
     scheme := "http"
     if c.Request.TLS != nil {
@@ -270,48 +266,66 @@ func (h *LeaveHandler) GetLeaveDetail(c *gin.Context) {
     }
     baseURL := fmt.Sprintf("%s://%s/", scheme, c.Request.Host)
 
-	// 5. ปั้นข้อมูลไฟล์แนบ
-	var evidenceFiles []map[string]interface{}
-	for _, att := range attachments {
-		evidenceFiles = append(evidenceFiles, map[string]interface{}{
-			"file-name": att.OriginalName,
-			"file-url":  baseURL + att.FilePath, // อนาคตอาจจะเอา Domain มาต่อหน้า FilePath ตรงนี้
-			"file-type": att.FileType,
-			"file-size": att.FileSize,
-		})
-	}
-	if evidenceFiles == nil {
-		evidenceFiles = []map[string]interface{}{}
-	}
+    var evidenceFiles []map[string]interface{}
+    for _, att := range attachments {
+        evidenceFiles = append(evidenceFiles, map[string]interface{}{
+            "file-name": att.OriginalName,
+            "file-url":  baseURL + att.FilePath,
+            "file-type": att.FileType,
+            "file-size": att.FileSize,
+        })
+    }
+    if evidenceFiles == nil {
+        evidenceFiles = []map[string]interface{}{}
+    }
 
-	// 6. ปั้นข้อมูลการอนุมัติ (เช็ค nil pointer ด้วย)
-	approveDetail := map[string]interface{}{
-		"status":       finalStatus,
-		"approve-role": detail.ApproveRole,
-		"approver":     detail.Approver,
-		"reason":       detail.ApproveReason,
-		"approve-date": nil,
-	}
-	if detail.ApproveDate != nil {
-		approveDetail["approve-date"] = detail.ApproveDate.In(loc).Format("2006-01-02T15:04:05.000+07:00")
-	}
+    // 🌟 [แก้ตรงนี้] จัด Format ให้เหมือนเส้น Personnel เป๊ะๆ
+    // ถ้าค่าเป็น nil ให้ส่งกลับเป็น "" หรือ null ตามที่ Personnel ทำ
+    
+    var approverName interface{} = ""
+    if detail.Approver != nil {
+        approverName = *detail.Approver
+    }
 
-	// 7. ส่ง JSON กลับไปให้ Frontend
-	response := gin.H{
-		"request-detail": map[string]interface{}{
-			"leave-type":        detail.LeaveType,
-			"date-from":         detail.DateFrom.In(loc).Format("2006-01-02T15:04:05.000+07:00"),
-			"date-to":           detail.DateTo.In(loc).Format("2006-01-02T15:04:05.000+07:00"),
-			"from-date-morning": detail.FromDateMorning,
-			"to-date-morning":   detail.ToDateMorning,
-			"remark":            detail.Remark,
-			"evidence-files":    evidenceFiles,
-			"request-date":      detail.CreatedAt.In(loc).Format("2006-01-02T15:04:05.000+07:00"),
-		},
-		"approve-detail": approveDetail,
-	}
+    var approveReason interface{} = ""
+    if detail.ApproveReason != nil {
+        approveReason = *detail.ApproveReason
+    }
 
-	c.JSON(http.StatusOK, response)
+    var approveRole interface{} = ""
+    if detail.ApproveRole != nil {
+        approveRole = *detail.ApproveRole
+    }
+
+    approveDetail := map[string]interface{}{
+        "status":       finalStatus,
+        "approve-role": approveRole,
+        "approver":     approverName,
+        "reason":       approveReason,
+        "approve-date": nil, // Default เป็น null
+    }
+
+    // ถ้ามีวันที่อนุมัติจริง ค่อยแปลงเป็น String
+    if detail.ApproveDate != nil && !detail.ApproveDate.IsZero() {
+        approveDetail["approve-date"] = detail.ApproveDate.In(loc).Format(time.RFC3339)
+    }
+
+    // 7. ส่ง JSON กลับไปให้ Frontend
+    response := gin.H{
+        "request-detail": map[string]interface{}{
+            "leave-type":        detail.LeaveType,
+            "date-from":         detail.DateFrom.In(loc).Format(time.RFC3339),
+            "date-to":           detail.DateTo.In(loc).Format(time.RFC3339),
+            "from-date-morning": detail.FromDateMorning,
+            "to-date-morning":   detail.ToDateMorning,
+            "remark":            detail.Remark,
+            "evidence-files":    evidenceFiles,
+            "request-date":      detail.CreatedAt.In(loc).Format(time.RFC3339),
+        },
+        "approve-detail": approveDetail,
+    }
+
+    c.JSON(http.StatusOK, response)
 }
 
 func (h *LeaveHandler) GetLeaveInfo(c *gin.Context) {
