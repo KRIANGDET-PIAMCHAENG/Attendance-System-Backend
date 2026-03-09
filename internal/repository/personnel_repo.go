@@ -429,7 +429,6 @@ func (y YearStat) MarshalJSON() ([]byte, error) {
 		y.Jan, y.Feb, y.Mar, y.Apr, y.May, y.Jun, y.Jul, y.Aug, y.Sep, y.Oct, y.Nov, y.Dec)
 	return []byte(str), nil
 }
-
 func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) (map[string]interface{}, error) {
 	if !r.checkPermission(managerID, personnelID) {
 		return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูลของพนักงานท่านนี้")
@@ -438,6 +437,9 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 	now := time.Now()
 	currentYear := now.Year()
 	currentMonth := now.Month()
+
+	// 🌟 กำหนด "วันนี้" (ตัดเวลาทิ้ง เอาแค่วันที่) เพื่อใช้หยุดการนับ
+	today := time.Date(currentYear, currentMonth, now.Day(), 0, 0, 0, 0, time.Local)
 
 	offset := int(now.Weekday())
 	startOfWeek := time.Date(currentYear, currentMonth, now.Day()-offset, 0, 0, 0, 0, time.Local)
@@ -454,21 +456,29 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 		holidayMap[h.Format("2006-01-02")] = true
 	}
 
+	// 🌟 1. นับตัวหาร Weekly (นับเฉพาะวันทำงาน และหยุดนับถ้าเลย "วันนี้" ไปแล้ว)
 	workingDaysInWeek := 0
 	for d := startOfWeek; !d.After(endOfWeek); d = d.AddDate(0, 0, 1) {
+		if d.After(today) {
+			continue // ถ้าเป็นวันพุธ-ศุกร์ (อนาคต) ให้ข้ามไปเลย ไม่เอามาเป็นตัวหาร
+		}
 		if d.Weekday() != time.Saturday && d.Weekday() != time.Sunday && !holidayMap[d.Format("2006-01-02")] {
 			workingDaysInWeek++
 		}
 	}
 
+	// 🌟 2. นับตัวหาร Monthly (นับเฉพาะวันทำงาน และหยุดนับถ้าเลย "วันนี้" ไปแล้ว)
 	workingDaysInMonth := 0
 	for d := startOfMonth; !d.After(endOfMonth); d = d.AddDate(0, 0, 1) {
+		if d.After(today) {
+			continue // ถ้าเป็นวันในอนาคตของเดือนนี้ ให้ข้ามไปเลย ไม่เอามาเป็นตัวหาร
+		}
 		if d.Weekday() != time.Saturday && d.Weekday() != time.Sunday && !holidayMap[d.Format("2006-01-02")] {
 			workingDaysInMonth++
 		}
 	}
 
-	// 🌟 1. ประกาศลำดับ (Keys) ที่ต้องการให้แสดงใน JSON เป๊ะๆ
+	// ประกาศลำดับ (Keys) ที่ต้องการให้แสดงใน JSON เป๊ะๆ
 	thaiDays := map[time.Weekday]string{
 		time.Sunday: "อา.", time.Monday: "จ.", time.Tuesday: "อ.",
 		time.Wednesday: "พ.", time.Thursday: "พฤ.", time.Friday: "ศ.", time.Saturday: "ส.",
@@ -503,7 +513,7 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 	totalMap := make(map[string]float64)
 	var totalWorkingHour, weeklyWorkingHour, monthlyWorkingHour, yearlyWorkingHour float64
 
-	// 🌟 2. ดึงข้อมูลและคำนวณตามเดิม
+	// ดึงข้อมูลและคำนวณชั่วโมงทำงาน
 	type AttRecord struct {
 		Date     time.Time
 		CheckIn  string `gorm:"column:check_in"`
@@ -554,6 +564,7 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 		}
 	}
 
+	// 🌟 3. คำนวณ Average โดยหารด้วยวันที่นับไว้ (ไม่รวมอนาคต และ ไม่รวมวันหยุด)
 	weeklyAverageHour, monthlyAverageHour, yearlyAverageHour, totalAverageHour := 0.0, 0.0, 0.0, 0.0
 	if workingDaysInWeek > 0 {
 		weeklyAverageHour = math.Round((weeklyWorkingHour/float64(workingDaysInWeek))*100) / 100
@@ -561,12 +572,19 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 	if workingDaysInMonth > 0 {
 		monthlyAverageHour = math.Round((monthlyWorkingHour/float64(workingDaysInMonth))*100) / 100
 	}
-	yearlyAverageHour = math.Round((yearlyWorkingHour/12)*100) / 100
+	
+	// สำหรับปี ขอหารแค่เดือนปัจจุบัน (เผื่อลูกพี่อยากให้มันสมจริงเหมือนกัน)
+	// สมมติเดือนนี้เดือน 3 ก็หาร 3 (ไม่หาร 12)
+	currentMonthNum := int(currentMonth)
+	if currentMonthNum > 0 {
+		yearlyAverageHour = math.Round((yearlyWorkingHour/float64(currentMonthNum))*100) / 100
+	}
+	
 	if len(totalMap) > 0 {
 		totalAverageHour = math.Round((totalWorkingHour/float64(len(totalMap)))*100) / 100
 	}
 
-	// 🌟 3. ท่าไม้ตาย! ฟังก์ชันจับเรียง JSON ให้ลำดับเป๊ะๆ
+	// ท่าไม้ตาย! ฟังก์ชันจับเรียง JSON ให้ลำดับเป๊ะๆ
 	orderedJSON := func(keys []string, m map[string]float64) json.RawMessage {
 		str := "{"
 		for i, k := range keys {
@@ -579,14 +597,13 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 		return json.RawMessage(str)
 	}
 
-	// เรียงลำดับปีของ total (เช่น 66, 67, 68) ให้จากน้อยไปมาก
 	totalKeys := []string{}
 	for k := range totalMap {
 		totalKeys = append(totalKeys, k)
 	}
 	sort.Strings(totalKeys)
 
-	// 🌟 4. ประกอบร่าง JSON คืนค่า
+	// ประกอบร่าง JSON คืนค่า
 	return map[string]interface{}{
 		"total-working-hour":   math.Round(totalWorkingHour*100) / 100,
 		"total-average-hour":   totalAverageHour,
@@ -596,10 +613,10 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 		"monthly-average-hour": monthlyAverageHour,
 		"yearly-working-hour":  math.Round(yearlyWorkingHour*100) / 100,
 		"yearly-average-hour":  yearlyAverageHour,
-		"total":                orderedJSON(totalKeys, totalMap), // 👈 ใช้ท่าไม้ตายตรงนี้
-		"week":                 orderedJSON(weekKeys, weekMap),   // 👈 ใช้ท่าไม้ตายตรงนี้
-		"month":                orderedJSON(monthKeys, monthMap), // 👈 ใช้ท่าไม้ตายตรงนี้
-		"year":                 orderedJSON(yearKeys, yearMap),   // 👈 ใช้ท่าไม้ตายตรงนี้
+		"total":                orderedJSON(totalKeys, totalMap),
+		"week":                 orderedJSON(weekKeys, weekMap),
+		"month":                orderedJSON(monthKeys, monthMap),
+		"year":                 orderedJSON(yearKeys, yearMap),
 	}, nil
 }
 
