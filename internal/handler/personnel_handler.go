@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
+	//"time"
 	"github.com/gin-gonic/gin"
 	"my-app/internal/repository" // ⚠️ อย่าลืมแก้ Path
 )
@@ -221,36 +221,28 @@ func (h *PersonnelHandler) GetAttendanceHistory(c *gin.Context) {
 
 
 
-// 🌟 Get Statistic (Manager ดูสถิติลูกน้อง)
+// รับ Request เส้น GET /manager/personnel_info/statistic
 func (h *PersonnelHandler) GetStatistic(c *gin.Context) {
-	// 1. ดึง ID ของ Manager จาก Token 
-	// (ใช้ฟังก์ชันเดิมที่ลูกพี่มีอยู่แล้ว เช่น c.GetString("user_id") หรือ getManagerID(c))
-	managerID := getManagerID(c) 
-	
-	// 2. ดึง ID ลูกน้องจาก Query Parameter (?id=...)
+	managerID := getManagerID(c) // สมมติว่าดึงมาจาก token
 	personnelID := c.Query("id")
-	if personnelID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ id ของพนักงาน"})
+	yearStr := c.Query("year")
+
+	if personnelID == "" || yearStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ id และ year"})
 		return
 	}
 
-	// 3. รับค่า Year (ค.ศ.) จาก Query Parameter (?year=...)
-	yearStr := c.Query("year")
 	year, err := strconv.Atoi(yearStr)
-	
-	// ถ้าปีที่ส่งมาพัง หรือไม่ยอมส่งมา ให้ Fallback เป็นปีปัจจุบันอัตโนมัติ
-	if err != nil || year == 0 {
-		year = time.Now().Year() 
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ year ไม่ถูกต้อง (ต้องเป็น ค.ศ.)"})
+		return
 	}
 
-	// 4. ส่งไปคำนวณที่ Repository
-	res, err := h.repo.GetStatistic(managerID, personnelID, year)
+	res, err := h.repo.GetPersonnelStatistic(managerID, personnelID, year)
 	if err != nil {
-		// ถ้ามี Error เช่น ไม่มีสิทธิ์ ให้ส่ง 403 Forbidden กลับไป
 		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 5. ส่ง JSON หล่อๆ กลับไปให้ Frontend
 	c.JSON(http.StatusOK, res)
 }

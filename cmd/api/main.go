@@ -258,6 +258,7 @@ func main() {
 			// 📊 Statistic
 			personnel.GET("/statistic/working_hours", personnelHdl.GetManagerWorkingHoursStatistic)
 			personnel.GET("/statistic/filter_range", personnelHdl.GetManagerStatFilterRange)
+			personnel.GET("/statistic", personnelHdl.GetStatistic)
 
 			// ⏱️ Attendance Request
 			personnel.GET("/attendance_request/pending", personnelHdl.GetAttReqPending)
@@ -268,8 +269,7 @@ func main() {
 			// 📅 Attendance History
 			personnel.GET("/attendance/history", personnelHdl.GetAttendanceHistory)
 			personnel.GET("/attendance/filter_range", personnelHdl.GetManagerStatFilterRange) // ใช้ฟังก์ชันร่วมกับ Statistic ได้เลย
-			personnel.GET("/statistic", personnelHdl.GetStatistic)
-
+			
 			
 
 		}

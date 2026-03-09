@@ -740,225 +740,238 @@ func (r *PersonnelRepo) GetAttendanceHistory(managerID, personnelID, startDate, 
 	return results, nil
 }
 
-func (r *PersonnelRepo) GetStatistic(managerID, personnelID string, year int) (map[string]interface{}, error) {
-	// 🛡️ 1. เช็คสิทธิ์ (RBAC) Manager ต้องมีสิทธิ์ดูคนนี้เท่านั้น
+func (r *PersonnelRepo) GetPersonnelStatistic(managerID, personnelID string, targetYear int) (map[string]interface{}, error) {
+	// 1. 🛡️ เช็คสิทธิ์ (ถ้าลูกพี่มีฟังก์ชันนี้แล้ว)
 	if !r.checkPermission(managerID, personnelID) {
 		return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูลของพนักงานท่านนี้")
 	}
 
-	// 2. ดึง Config ปีงบประมาณ (Budget Year)
-	var budgetConfig struct {
-		ConfigValue string `gorm:"column:config_value"`
+	// 2. 📅 โหลด Config ปีงบประมาณ (Budget Year)
+	var byConfig struct {
+		Month int `json:"month"`
+		Day   int `json:"day"`
 	}
-	r.db.Table("system_configs").Where("config_key = ?", "budget_year").First(&budgetConfig)
-	
-	startMonth, startDay := 1, 1
-	if budgetConfig.ConfigValue != "" {
-		var cfg map[string]int
-		json.Unmarshal([]byte(budgetConfig.ConfigValue), &cfg)
-		if m, ok := cfg["month"]; ok { startMonth = m }
-		if d, ok := cfg["day"]; ok { startDay = d }
+	byConfig.Month = 1 // Default 1 ม.ค.
+	byConfig.Day = 1
+
+	var rawBY string
+	r.db.Table("system_configs").Where("config_key = 'budget_year'").Select("config_value").Scan(&rawBY)
+	if rawBY != "" {
+		json.Unmarshal([]byte(rawBY), &byConfig)
 	}
 
-	// คำนวณวันเริ่มและวันสิ้นสุดของปีงบประมาณที่ระบุ
-	var startDate, endDate time.Time
-	if startMonth > 1 {
-		startDate = time.Date(year-1, time.Month(startMonth), startDay, 0, 0, 0, 0, time.Local)
-		endDate = startDate.AddDate(1, 0, -1)
-	} else {
-		startDate = time.Date(year, time.Month(startMonth), startDay, 0, 0, 0, 0, time.Local)
-		endDate = startDate.AddDate(1, 0, -1)
+	// 🎯 คำนวณวันเริ่มต้น และ วันสิ้นสุด ปีงบประมาณ
+	startYear := targetYear
+	if byConfig.Month > 6 {
+		startYear = targetYear - 1 // ถ้าเริ่ม ต.ค. ปีงบ 2026 ต้องเริ่ม 1 ต.ค. 2025
 	}
+	startDate := time.Date(startYear, time.Month(byConfig.Month), byConfig.Day, 0, 0, 0, 0, time.Local)
+	endDate := startDate.AddDate(1, 0, 0).AddDate(0, 0, -1)
 
-	// ⏳ calcEndDate: ถ้าเป็นปีปัจจุบัน ให้คำนวณสถิติถึงแค่ "วันนี้" เพื่อไม่ให้วันในอนาคตกลายเป็นขาดงาน
-	today := time.Now()
-	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.Local)
-	calcEndDate := endDate
-	if todayDate.Before(endDate) {
-		calcEndDate = todayDate
-	}
-
-	// 3. ดึง Config เวลาเข้างาน (เพื่อเช็คว่ามาสายไหม)
+	// 3. ⏱️ โหลด Config เวลาเข้างาน
 	var attConfig struct {
-		ConfigValue string `gorm:"column:config_value"`
+		CheckInTime struct {
+			Hour   int `json:"hour"`
+			Minute int `json:"minute"`
+		} `json:"check-in-time"`
 	}
-	r.db.Table("system_configs").Where("config_key = ?", "attendance_time").First(&attConfig)
-	checkInHour, checkInMinute := 8, 30 // ค่า Default กรณีหา Config ไม่เจอ
-	if attConfig.ConfigValue != "" {
-		var cfg map[string]interface{}
-		json.Unmarshal([]byte(attConfig.ConfigValue), &cfg)
-		if cTime, ok := cfg["check-in-time"].(map[string]interface{}); ok {
-			if h, ok := cTime["hour"].(float64); ok { checkInHour = int(h) }
-			if m, ok := cTime["minute"].(float64); ok { checkInMinute = int(m) }
+	attConfig.CheckInTime.Hour = 8 // Default 08:30
+	attConfig.CheckInTime.Minute = 30
+
+	var rawAtt string
+	r.db.Table("system_configs").Where("config_key = 'attendance_time'").Select("config_value").Scan(&rawAtt)
+	if rawAtt != "" {
+		json.Unmarshal([]byte(rawAtt), &attConfig)
+	}
+	checkInLimit, _ := time.Parse("15:04:05", fmt.Sprintf("%02d:%02d:00", attConfig.CheckInTime.Hour, attConfig.CheckInTime.Minute))
+
+	// 4. 🏖️ โหลดวันหยุดบริษัท/ราชการ
+	var holidays []time.Time
+	r.db.Table("company_holidays").
+		Select("holiday_date").
+		Where("holiday_date >= ? AND holiday_date <= ?", startDate, endDate).
+		Pluck("holiday_date", &holidays)
+
+	holidayMap := make(map[string]bool)
+	for _, h := range holidays {
+		holidayMap[h.Format("2006-01-02")] = true
+	}
+
+	// 5. 💼 คำนวณวันทำงานทั้งหมด (ตัดเสาร์-อาทิตย์ และวันหยุดออก)
+	totalWorkDays := 0
+	workDayMap := make(map[string]bool)
+	now := time.Now()
+
+	for d := startDate; !d.After(endDate); d = d.AddDate(0, 0, 1) {
+		if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+			continue // ตัดเสาร์อาทิตย์
+		}
+		dateStr := d.Format("2006-01-02")
+		if holidayMap[dateStr] {
+			continue // ตัดวันหยุดราชการ
+		}
+		totalWorkDays++
+
+		// มาร์กไว้ว่าเป็น "วันทำงานในอดีตจนถึงปัจจุบัน" (เพื่อใช้คำนวณการขาดงาน/มาสาย)
+		if !d.After(now) {
+			workDayMap[dateStr] = true
 		}
 	}
-	checkInLimitStr := fmt.Sprintf("%02d:%02d:00", checkInHour, checkInMinute)
 
-	// 4. ดึงวันหยุดบริษัทในช่วงปีงบประมาณนั้น
-	var holidayDates []time.Time
-	r.db.Table("company_holidays").
-		Where("holiday_date >= ? AND holiday_date <= ?", startDate, endDate).
-		Pluck("holiday_date", &holidayDates)
-	
-	holidayMap := make(map[string]bool)
-	for _, hd := range holidayDates {
-		holidayMap[hd.Format("2006-01-02")] = true
+	// 6. 🤒 โหลดข้อมูลการลา (ที่อนุมัติแล้วเท่านั้น)
+	type LeaveReq struct {
+		LeaveType       string    `gorm:"column:name_en"`
+		DateFrom        time.Time `gorm:"column:date_from"`
+		DateTo          time.Time `gorm:"column:date_to"`
+		FromDateMorning bool      `gorm:"column:from_date_morning"`
+		ToDateMorning   bool      `gorm:"column:to_date_morning"`
+	}
+	var leaves []LeaveReq
+	r.db.Table("leave_requests lr").
+		Select("lt.name_en, lr.date_from, lr.date_to, lr.from_date_morning, lr.to_date_morning").
+		Joins("JOIN leave_types lt ON lr.leave_type = lt.name_en").
+		Where("lr.user_id = ? AND lr.status = 'approved' AND lr.date_from <= ? AND lr.date_to >= ?", personnelID, endDate, startDate).
+		Scan(&leaves)
+
+	leaveUsedPerType := make(map[string]float64)
+	leaveDaysMap := make(map[string]float64)
+
+	// ลูประบุว่าวันไหนลาไปบ้าง (คำนวณครึ่งวัน/เต็มวัน)
+	for _, l := range leaves {
+		for d := l.DateFrom; !d.After(l.DateTo); d = d.AddDate(0, 0, 1) {
+			if d.Before(startDate) || d.After(endDate) {
+				continue // ตัดวันที่อยู่นอกปีงบประมาณ
+			}
+			dateStr := d.Format("2006-01-02")
+			if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday || holidayMap[dateStr] {
+				continue // ลาคร่อมวันหยุด ไม่นับวันนั้น
+			}
+
+			dayVal := 1.0
+			if d.Format("2006-01-02") == l.DateFrom.Format("2006-01-02") && !l.FromDateMorning {
+				dayVal -= 0.5 // เริ่มลาตอนบ่าย หักออกครึ่งวัน
+			}
+			if d.Format("2006-01-02") == l.DateTo.Format("2006-01-02") && l.ToDateMorning {
+				dayVal -= 0.5 // สิ้นสุดลาตอนเช้า หักออกครึ่งวัน
+			}
+
+			leaveUsedPerType[l.LeaveType] += dayVal
+
+			if !d.After(now) {
+				leaveDaysMap[dateStr] += dayVal
+			}
+		}
 	}
 
-	// 5. ดึงสิทธิ์การลา (Leave Quotas)
-	type LeaveBalanceRow struct {
-		LeaveType string  `gorm:"column:name_en"`
-		Quota     float64 `gorm:"column:days_allowed"`
+	// 7. ⏰ โหลดข้อมูลการสแกนเข้างาน
+	type AttRecord struct {
+		Date    time.Time
+		CheckIn string `gorm:"column:check_in"`
 	}
-	var balances []LeaveBalanceRow
+	var atts []AttRecord
+	r.db.Table("attendance").
+		Select("date, check_in").
+		Where("user_id = ? AND date >= ? AND date <= ?", personnelID, startDate, now).
+		Scan(&atts)
+
+	attMap := make(map[string]bool)
+	onTimeCount := 0
+	lateCount := 0
+
+	for _, a := range atts {
+		dateStr := a.Date.Format("2006-01-02")
+		if !workDayMap[dateStr] {
+			continue // สแกนในวันหยุด ไม่นับ
+		}
+		attMap[dateStr] = true
+
+		if a.CheckIn != "" {
+			t, err := time.Parse("15:04:05", a.CheckIn)
+			if err == nil {
+				if t.After(checkInLimit) {
+					lateCount++
+				} else {
+					onTimeCount++
+				}
+			}
+		}
+	}
+
+	// 8. ❌ คำนวณวันขาดงาน (Absent)
+	absentCount := 0
+	for dateStr, isWorkDay := range workDayMap {
+		if !isWorkDay {
+			continue
+		}
+		if attMap[dateStr] {
+			continue // สแกนเข้างานแล้ว ไม่ขาด
+		}
+		if leaveDaysMap[dateStr] >= 1.0 {
+			continue // ลาเต็มวันแล้ว ไม่ขาด
+		}
+
+		// 💡 ดักบั๊ก UX: ถ้าเป็น "วันนี้" และยังไม่ถึงเที่ยง อย่าเพิ่งนับว่าขาด 
+		// (อาจจะแค่สายหนักมาก หรือระบบสแกนดีเลย์)
+		if dateStr == now.Format("2006-01-02") && now.Hour() < 12 {
+			continue
+		}
+
+		absentCount++
+	}
+
+	// 9. 📊 โหลดโควต้าวันลา
+	type Balance struct {
+		LeaveType   string  `gorm:"column:name_en"`
+		DaysAllowed float64 `gorm:"column:days_allowed"`
+	}
+	var balances []Balance
 	r.db.Table("leave_balances lb").
 		Select("lt.name_en, lb.days_allowed").
 		Joins("JOIN leave_types lt ON lb.leave_type_id = lt.id").
-		Where("lb.user_id = ? AND lb.year = ?", personnelID, year).
+		// บางปีค่า year อาจเป็น NULL (จาก db เก่า) เลยดักไว้ให้ด้วยครับ
+		Where("lb.user_id = ? AND (lb.year = ? OR lb.year IS NULL)", personnelID, targetYear).
 		Scan(&balances)
 
-	leaveQuotas := make(map[string]float64)
+	quotaMap := make(map[string]float64)
 	for _, b := range balances {
-		leaveQuotas[b.LeaveType] = b.Quota
+		quotaMap[b.LeaveType] = b.DaysAllowed
 	}
 
-	// ดึงประเภทการลาทั้งหมด เผื่อบางประเภทโควต้าเป็น 0 ก็ต้องส่งกลับไปให้ Frontend
-	var allTypes []struct{ NameEn string `gorm:"column:name_en"` }
-	r.db.Table("leave_types").Scan(&allTypes)
-	for _, t := range allTypes {
-		if _, ok := leaveQuotas[t.NameEn]; !ok {
-			leaveQuotas[t.NameEn] = 0.0 
-		}
-	}
-
-	// 6. ดึงข้อมูลประวัติการลาที่ "อนุมัติแล้ว (approved)"
-	type LeaveReq struct {
-		LeaveType   string    `gorm:"column:leave_type"`
-		DateFrom    time.Time `gorm:"column:date_from"`
-		DateTo      time.Time `gorm:"column:date_to"`
-		FromMorning bool      `gorm:"column:from_date_morning"`
-		ToMorning   bool      `gorm:"column:to_date_morning"`
-	}
-	var leaves []LeaveReq
-	r.db.Table("leave_requests").
-		Where("user_id = ? AND status = 'approved' AND date_from <= ? AND date_to >= ?", personnelID, endDate, startDate).
-		Scan(&leaves)
-
-	leaveUsed := make(map[string]float64)
-	fullLeaveDaysMap := make(map[string]bool)
-
-	// คำนวณวันลาที่ใช้ไป (รองรับการลาครึ่งวัน และข้ามวันหยุด)
-	for _, lv := range leaves {
-		curr := lv.DateFrom
-		for !curr.After(lv.DateTo) {
-			dateStr := curr.Format("2006-01-02")
-			isWeekend := curr.Weekday() == time.Saturday || curr.Weekday() == time.Sunday
-			isHoliday := holidayMap[dateStr]
-
-			if !isWeekend && !isHoliday {
-				dayVal := 1.0
-				// ลาแค่วันเดียว แต่เลือกเป็นครึ่งวัน
-				if curr.Equal(lv.DateFrom) && curr.Equal(lv.DateTo) {
-					if !lv.FromMorning || lv.ToMorning { dayVal = 0.5 }
-				} else {
-					// ลาหลายวัน (เช็ควันหัว-ท้าย)
-					if curr.Equal(lv.DateFrom) && !lv.FromMorning { dayVal = 0.5 }
-					if curr.Equal(lv.DateTo) && lv.ToMorning { dayVal = 0.5 }
-				}
-
-				leaveUsed[lv.LeaveType] += dayVal
-				
-				// ถ้าลาเต็มวัน ให้จดไว้ว่าวันนี้ลา จะได้ไม่ถูกนับเป็น ขาดงาน (absent)
-				if dayVal == 1.0 { 
-					fullLeaveDaysMap[dateStr] = true 
-				}
-			}
-			curr = curr.AddDate(0, 0, 1)
-		}
-	}
-
-	// 7. ดึงข้อมูลการสแกนนิ้วเข้างาน (Attendance)
-	type AttRecord struct {
-		Date    time.Time `gorm:"column:date"`
-		CheckIn string    `gorm:"column:check_in"` 
-	}
-	var attendances []AttRecord
-	r.db.Table("attendance").
-		Select("date, check_in::text").
-		Where("user_id = ? AND date >= ? AND date <= ?", personnelID, startDate, calcEndDate).
-		Scan(&attendances)
-
-	attMap := make(map[string]string)
-	for _, a := range attendances {
-		attMap[a.Date.Format("2006-01-02")] = a.CheckIn
-	}
-
-	// 8. 🚀 เริ่มจำลองวัน (Loop Day-by-Day) เพื่อหา ขาด/ลา/มาสาย/ตรงเวลา
-	var totalWorkDays, actualWorkDays, onTimeDays, lateDays, absentDays int
-
-	curr := startDate
-	for !curr.After(calcEndDate) {
-		dateStr := curr.Format("2006-01-02")
-		isWeekend := curr.Weekday() == time.Saturday || curr.Weekday() == time.Sunday
-		isHoliday := holidayMap[dateStr]
-
-		// ถ้าเป็นวันทำงานปกติ (ไม่ใช่วันเสาร์-อาทิตย์ และ ไม่ใช่วันหยุดบริษัท)
-		if !isWeekend && !isHoliday {
-			totalWorkDays++
-
-			checkInTime, hasAtt := attMap[dateStr]
-			if hasAtt && checkInTime != "" {
-				// มาทำงาน
-				actualWorkDays++
-				if checkInTime <= checkInLimitStr {
-					onTimeDays++
-				} else {
-					lateDays++
-				}
-			} else {
-				// ไม่ได้มาทำงาน -> เช็คต่อว่าได้ "ลาเต็มวัน" ไหม?
-				// ถ้าไม่ได้ลาเต็มวัน และ วันนั้นผ่านไปแล้ว (เมื่อวานลงไป) -> ถือว่าขาดงาน
-				if !fullLeaveDaysMap[dateStr] && curr.Before(todayDate) {
-					absentDays++
-				}
-			}
-		}
-		curr = curr.AddDate(0, 0, 1)
-	}
-
-	// 9. ประกอบร่างจัด Format JSON ส่วนของวันลา (Leave Detail)
+	// 10. 🧩 ประกอบร่าง JSON ข้อมูล Leave ให้ตรงตาม Format
+	allLeaveTypes := []string{"sick", "personal", "vacation", "maternity", "paternity", "parental"}
+	leavesMap := make(map[string]interface{})
 	totalLeaveDays := 0.0
-	overLeaveDays := 0.0
-	leavesOutput := make(map[string]interface{})
+	totalOverLeave := 0.0
 
-	for _, t := range allTypes {
-		used := leaveUsed[t.NameEn]
-		quota := leaveQuotas[t.NameEn]
-		
-		totalLeaveDays += used
+	for _, lt := range allLeaveTypes {
+		used := leaveUsedPerType[lt]
+		quota := quotaMap[lt]
+
 		if used > quota {
-			overLeaveDays += (used - quota)
+			totalOverLeave += (used - quota)
 		}
+		totalLeaveDays += used
 
-		leavesOutput[t.NameEn] = map[string]interface{}{
+		leavesMap[lt] = map[string]interface{}{
 			"used_days":  used,
 			"quota_days": quota,
 		}
 	}
 
-	// 10. ส่งคืนผลลัพธ์โครงสร้างตามที่ Frontend หวังไว้เป๊ะๆ
+	// 11. 🚀 คืนค่ากลับให้ Handler
 	return map[string]interface{}{
 		"total_work_days":  totalWorkDays,
-		"actual_work_days": actualWorkDays,
+		// ลบวันลาที่ใช้ไปทั้งหมด ออกจากวันที่ต้องมาทำงาน = "วันที่ต้องทำงานจริง"
+		"actual_work_days": float64(totalWorkDays) - totalLeaveDays, 
 		"attendance_detail": map[string]interface{}{
-			"on_time_days": onTimeDays,
-			"late_days":    lateDays,
-			"absent_days":  absentDays,
+			"on_time_days": onTimeCount,
+			"late_days":    lateCount,
+			"absent_days":  absentCount,
 		},
 		"leave_detail": map[string]interface{}{
 			"total_leave_days": totalLeaveDays,
-			"over_leave_days":  overLeaveDays,
-			"leaves":           leavesOutput,
+			"over_leave_days":  totalOverLeave,
+			"leaves":           leavesMap,
 		},
 	}, nil
 }
