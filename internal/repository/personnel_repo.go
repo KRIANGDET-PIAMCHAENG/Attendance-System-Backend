@@ -38,21 +38,25 @@ func (r *PersonnelRepo) checkPermission(managerID, targetUserID string) bool {
 		Count(&subCount)
 	return subCount > 0
 }
-// 1. Get Pending
+// 1. Get Pending (ใบลาที่รออนุมัติ และ "ยังไม่เลยกำหนดเวลา")
 func (r *PersonnelRepo) GetPending(managerID, personnelID string) ([]map[string]interface{}, error) {
 	if !r.checkPermission(managerID, personnelID) {
 		return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูลของพนักงานท่านนี้")
 	}
 
-	var results []map[string]interface{}
+	// 🌟 ประกาศเป็น Array ว่าง ป้องกันการพ่น null ออกไปให้ Frontend
+	results := []map[string]interface{}{}
 	type Result struct {
-		ID        int; LeaveType string; DateFrom  time.Time
+		ID        int
+		LeaveType string    `gorm:"column:leave_type"`
+		DateFrom  time.Time `gorm:"column:date_from"`
 	}
 	var rows []Result
 
+	// 🌟 [แก้ตรงนี้] เพิ่มเงื่อนไข AND date_from >= ? (ดึงเฉพาะคิวที่ยังไม่ถึงวันลา)
 	r.db.Table("leave_requests").
 		Select("id, leave_type, date_from").
-		Where("user_id = ? AND status = 'pending'", personnelID).
+		Where("user_id = ? AND status = 'pending' AND date_from >= ?", personnelID, time.Now()).
 		Scan(&rows)
 
 	for _, row := range rows {
@@ -65,34 +69,50 @@ func (r *PersonnelRepo) GetPending(managerID, personnelID string) ([]map[string]
 	return results, nil
 }
 
-// 2. Get Recent
+// 2. Get Recent (ประวัติใบลา + ใบลาที่รออนุมัติแต่ "เลยกำหนดเวลาแล้ว")
 func (r *PersonnelRepo) GetRecent(managerID, personnelID, startDate, endDate string) ([]map[string]interface{}, error) {
 	if !r.checkPermission(managerID, personnelID) {
 		return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูลของพนักงานท่านนี้")
 	}
 
-	var results []map[string]interface{}
+	results := []map[string]interface{}{}
+	now := time.Now()
+
+	// 🌟 [แก้ตรงนี้] ดึง status ไม่เท่ากับ pending หรือ (เป็น pending แต่ date_from ผ่านมาแล้ว)
 	query := r.db.Table("leave_requests").
 		Select("id, leave_type, date_from, status").
-		Where("user_id = ? AND status != 'pending'", personnelID)
+		Where("user_id = ? AND (status != 'pending' OR (status = 'pending' AND date_from < ?))", personnelID, now)
 
 	if startDate != "" && endDate != "" {
 		query = query.Where("date_from >= ? AND date_from <= ?", startDate, endDate)
 	}
 
+	// 🌟 เรียงจากล่าสุดไปเก่าสุดให้ด้วย เผื่อ Frontend ไม่ได้เรียง
+	query = query.Order("date_from DESC")
+
 	type Result struct {
-		ID int; LeaveType string; DateFrom time.Time; Status string
+		ID        int
+		LeaveType string    `gorm:"column:leave_type"`
+		DateFrom  time.Time `gorm:"column:date_from"`
+		Status    string    `gorm:"column:status"`
 	}
 	var rows []Result
 	query.Scan(&rows)
 
 	for _, row := range rows {
+		finalStatus := row.Status
+
+		// 🌟 แปลงร่าง Status! ถ้าหลุดเข้ามาด้วยโควต้า pending แปลว่ามันเลยเวลาแล้ว ให้เปลี่ยนเป็น overdue
+		if finalStatus == "pending" && row.DateFrom.Before(now) {
+			finalStatus = "overdue"
+		}
+
 		results = append(results, map[string]interface{}{
 			"id":         fmt.Sprintf("LEV%012d", row.ID),
 			"leave-type": row.LeaveType,
 			"date-start": row.DateFrom.Format(time.RFC3339),
-			"status":     row.Status,
-			"approved":   (row.Status == "approved"),
+			"status":     finalStatus,
+			"approved":   (finalStatus == "approved"),
 		})
 	}
 	return results, nil
