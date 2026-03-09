@@ -899,61 +899,75 @@ func (r *PersonnelRepo) GetPersonnelStatistic(managerID, personnelID string, tar
 		}
 	}
 
-	// 7. ⏰ โหลดข้อมูลการสแกนเข้างาน
-	type AttRecord struct {
-		Date    time.Time
-		CheckIn string `gorm:"column:check_in"`
-	}
-	var atts []AttRecord
-	r.db.Table("attendance").
-		Select("date, check_in").
-		Where("user_id = ? AND date >= ? AND date <= ?", personnelID, startDate, now).
-		Scan(&atts)
+	// --- (ส่วนที่ 7: โหลดข้อมูลการสแกนเข้างาน) ---
+    type AttRecord struct {
+        Date     time.Time
+        CheckIn  string `gorm:"column:check_in"`
+        CheckOut string `gorm:"column:check_out"` // 🌟 เพิ่ม CheckOut เข้ามาเช็ค
+    }
+    var atts []AttRecord
+    r.db.Table("attendance").
+        Select("date, check_in, check_out"). // 🌟 Select check_out มาด้วย
+        Where("user_id = ? AND date >= ? AND date <= ?", personnelID, startDate, now).
+        Scan(&atts)
 
-	attMap := make(map[string]bool)
-	onTimeCount := 0
-	lateCount := 0
+    attMap := make(map[string]bool)
+    onTimeCount := 0
+    lateCount := 0
 
-	for _, a := range atts {
-		dateStr := a.Date.Format("2006-01-02")
-		if !workDayMap[dateStr] {
-			continue // สแกนในวันหยุด ไม่นับ
-		}
-		attMap[dateStr] = true
+    for _, a := range atts {
+        dateStr := a.Date.Format("2006-01-02")
+        if !workDayMap[dateStr] {
+            continue
+        }
 
-		if a.CheckIn != "" {
-			t, err := time.Parse("15:04:05", a.CheckIn)
-			if err == nil {
-				if t.After(checkInLimit) {
-					lateCount++
-				} else {
-					onTimeCount++
-				}
-			}
-		}
-	}
+        // 🌟 [เงื่อนไขใหม่] ต้องมีทั้ง Check-In และ Check-Out เท่านั้นถึงจะนับว่ามาทำงาน
+        if a.CheckIn != "" && a.CheckOut != "" {
+            attMap[dateStr] = true // มาร์กว่า "มาทำงานสมบูรณ์"
 
-	// 8. ❌ คำนวณวันขาดงาน (Absent)
-	absentCount := 0
-	for dateStr, isWorkDay := range workDayMap {
-		if !isWorkDay {
-			continue
-		}
-		if attMap[dateStr] {
-			continue // สแกนเข้างานแล้ว ไม่ขาด
-		}
-		if leaveDaysMap[dateStr] >= 1.0 {
-			continue // ลาเต็มวันแล้ว ไม่ขาด
-		}
+            t, err := time.Parse("15:04:05", a.CheckIn)
+            if err == nil {
+                if t.After(checkInLimit) {
+                    lateCount++
+                } else {
+                    onTimeCount++
+                }
+            }
+        } else {
+            // ถ้า Check-In หรือ Check-Out หายไปอย่างใดอย่างหนึ่ง 
+            // เราจะไม่เซ็ต attMap[dateStr] = true ซึ่งจะทำให้มันไปตกที่ Absent ในข้อถัดไป
+            attMap[dateStr] = false 
+        }
+    }
 
-		// 💡 ดักบั๊ก UX: ถ้าเป็น "วันนี้" และยังไม่ถึงเที่ยง อย่าเพิ่งนับว่าขาด 
-		// (อาจจะแค่สายหนักมาก หรือระบบสแกนดีเลย์)
-		if dateStr == now.Format("2006-01-02") && now.Hour() < 12 {
-			continue
-		}
+    // --- (ส่วนที่ 8: คำนวณวันขาดงาน Absent) ---
+    absentCount := 0
+    for dateStr, isWorkDay := range workDayMap {
+        if !isWorkDay {
+            continue
+        }
 
-		absentCount++
-	}
+        // 🌟 ถ้าไม่มีใน attMap หรือค่าใน attMap เป็น false (แปลว่า record ไม่สมบูรณ์)
+        // และวันนั้นไม่ได้ลาเต็มวัน -> นับเป็นขาดงาน
+        hasFullRecord := attMap[dateStr] 
+        
+        if hasFullRecord {
+            continue // มี record สมบูรณ์ ไม่ขาด
+        }
+
+        if leaveDaysMap[dateStr] >= 1.0 {
+            continue // ลาเต็มวันแล้ว ไม่ขาด
+        }
+
+        // 💡 ดักบั๊ก UX: ถ้าเป็น "วันนี้" และยังไม่ถึงเวลาเลิกงาน (เช่น ยังไม่ 17:00)
+        // อย่าเพิ่งนับว่าขาดเพราะ record ไม่สมบูรณ์ (เพราะเขายังไม่กดออก)
+        // สมมติเวลาเลิกงานมาตรฐานคือ 16:00
+        if dateStr == now.Format("2006-01-02") && now.Hour() < 16 {
+            continue
+        }
+
+        absentCount++
+    }
 
 	// 9. 📊 โหลดโควต้าวันลา
 	type Balance struct {
