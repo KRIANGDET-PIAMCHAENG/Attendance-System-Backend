@@ -244,12 +244,13 @@ func main() {
 		// ✅ เปลี่ยนจาก api.Group เป็น manager.Group ครับ
 		personnel := manager.Group("/personnel_info")
 		{
-			personnel.GET("/pending", personnelHdl.GetPending)
-			personnel.GET("/recent", personnelHdl.GetRecent)
-			personnel.GET("/filter_range", personnelHdl.GetFilterRange)
-			personnel.GET("/detail", personnelHdl.GetDetail)
+			personnel.GET("/leave/pending", personnelHdl.GetPending)
+			personnel.GET("/leave/recent", personnelHdl.GetRecent)
+			personnel.GET("/leave/filter_range", personnelHdl.GetFilterRange)
+			personnel.GET("/leave/detail", personnelHdl.GetDetail)
 			personnel.GET("/users", personnelHdl.GetUsers)
 			personnel.GET("/permissions", personnelHdl.GetPermissionLevel)
+
 			// 🌟 [NEW] เพิ่มเส้นนี้เข้าไปในกลุ่ม personnel
 			personnel.GET("/personnel_data", personnelHdl.GetPersonnelData)
 
