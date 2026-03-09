@@ -149,3 +149,72 @@ func (h *PersonnelHandler) GetPersonnelData(c *gin.Context) {
 	// โยนผลลัพธ์กลับแบบ 200 OK
 	c.JSON(http.StatusOK, res)
 }
+
+// 🌟 Statistic (Working Hours)
+func (h *PersonnelHandler) GetManagerWorkingHoursStatistic(c *gin.Context) {
+	managerID := getManagerID(c)
+	personnelID := c.Query("id")
+	if personnelID == "" { c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ id"}); return }
+	res, err := h.repo.GetManagerWorkingHoursStatistic(managerID, personnelID)
+	if err != nil { c.JSON(http.StatusForbidden, gin.H{"error": err.Error()}); return }
+	c.JSON(http.StatusOK, res)
+}
+
+// 🌟 Statistic & Attendance (Filter Range)
+func (h *PersonnelHandler) GetManagerStatFilterRange(c *gin.Context) {
+	managerID := getManagerID(c)
+	personnelID := c.Query("id")
+	if personnelID == "" { c.JSON(http.StatusBadRequest, gin.H{"error": "กรุณาระบุ id"}); return }
+	res, err := h.repo.GetManagerStatFilterRange(managerID, personnelID)
+	if err != nil { c.JSON(http.StatusForbidden, gin.H{"error": err.Error()}); return }
+	c.JSON(http.StatusOK, res)
+}
+
+// 🌟 Attendance Requests (Pending)
+func (h *PersonnelHandler) GetAttReqPending(c *gin.Context) {
+	managerID := getManagerID(c)
+	personnelID := c.Query("id")
+	res, err := h.repo.GetAttReqPending(managerID, personnelID)
+	if err != nil { c.JSON(http.StatusForbidden, gin.H{"error": err.Error()}); return }
+	c.JSON(http.StatusOK, gin.H{"pending": res})
+}
+
+// 🌟 Attendance Requests (Recent)
+func (h *PersonnelHandler) GetAttReqRecent(c *gin.Context) {
+	managerID := getManagerID(c)
+	personnelID := c.Query("id")
+	res, err := h.repo.GetAttReqRecent(managerID, personnelID, c.Query("startDate"), c.Query("endDate"))
+	if err != nil { c.JSON(http.StatusForbidden, gin.H{"error": err.Error()}); return }
+	c.JSON(http.StatusOK, gin.H{"recent": res})
+}
+
+// 🌟 Attendance Requests (Filter Range)
+func (h *PersonnelHandler) GetAttReqFilterRange(c *gin.Context) {
+	managerID := getManagerID(c)
+	personnelID := c.Query("id")
+	res, err := h.repo.GetAttReqFilterRange(managerID, personnelID)
+	if err != nil { c.JSON(http.StatusForbidden, gin.H{"error": err.Error()}); return }
+	c.JSON(http.StatusOK, res)
+}
+
+// 🌟 Attendance Requests (Detail)
+func (h *PersonnelHandler) GetAttReqDetail(c *gin.Context) {
+	managerID := getManagerID(c)
+	reqIDStr := c.Query("request-id")
+	idStr := strings.TrimPrefix(reqIDStr, "REQ") // หั่นคำว่า REQ ทิ้ง
+	reqID, err := strconv.Atoi(idStr)
+	if err != nil || reqID == 0 { c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID คำขอไม่ถูกต้อง"}); return }
+
+	res, err := h.repo.GetAttReqDetail(managerID, reqID)
+	if err != nil { c.JSON(http.StatusForbidden, gin.H{"error": err.Error()}); return }
+	c.JSON(http.StatusOK, res)
+}
+
+// 🌟 Attendance History
+func (h *PersonnelHandler) GetAttendanceHistory(c *gin.Context) {
+	managerID := getManagerID(c)
+	personnelID := c.Query("id")
+	res, err := h.repo.GetAttendanceHistory(managerID, personnelID, c.Query("startDate"), c.Query("endDate"))
+	if err != nil { c.JSON(http.StatusForbidden, gin.H{"error": err.Error()}); return }
+	c.JSON(http.StatusOK, res)
+}

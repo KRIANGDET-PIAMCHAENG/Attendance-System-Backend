@@ -56,7 +56,7 @@ func main() {
 	personnelHdl := handler.NewPersonnelHandler(personnelRepo)
 
 	statRepo := repository.NewStatRepo(db)
-    statHdl := handler.NewStatHandler(statRepo)
+	statHdl := handler.NewStatHandler(statRepo)
 
 	// ==========================================
 	// 🌟 [NEW] Setup Cron Job (ทำงานหลังบ้าน)
@@ -253,17 +253,31 @@ func main() {
 			// 🌟 [NEW] เพิ่มเส้นนี้เข้าไปในกลุ่ม personnel
 			personnel.GET("/personnel_data", personnelHdl.GetPersonnelData)
 
+			// 📊 Statistic
+			personnel.GET("/statistic/working_hours", personnelHdl.GetManagerWorkingHoursStatistic)
+			personnel.GET("/statistic/filter_range", personnelHdl.GetManagerStatFilterRange)
+
+			// ⏱️ Attendance Request
+			personnel.GET("/attendance_request/pending", personnelHdl.GetAttReqPending)
+			personnel.GET("/attendance_request/recent", personnelHdl.GetAttReqRecent)
+			personnel.GET("/attendance_request/filter_range", personnelHdl.GetAttReqFilterRange)
+			personnel.GET("/attendance_request/detail", personnelHdl.GetAttReqDetail)
+
+			// 📅 Attendance History
+			personnel.GET("/attendance/history", personnelHdl.GetAttendanceHistory)
+			personnel.GET("/attendance/filter_range", personnelHdl.GetManagerStatFilterRange) // ใช้ฟังก์ชันร่วมกับ Statistic ได้เลย
+
 		}
 	}
 
 	user_api := r.Group("/user")
-    user_api.Use(middleware.JWTMiddleware()) // บังคับแนบ Token
-    {
-        // 🌟 [NEW] เพิ่มเส้น Statistic
-        user_api.GET("/statistic", statHdl.GetUserStatistic)
+	user_api.Use(middleware.JWTMiddleware()) // บังคับแนบ Token
+	{
+		// 🌟 [NEW] เพิ่มเส้น Statistic
+		user_api.GET("/statistic", statHdl.GetUserStatistic)
 		user_api.GET("/statistic/working_hours", statHdl.GetWorkingHoursStatistic)
 		user_api.GET("/statistic/filter_range", statHdl.GetStatisticFilterRange)
-    }
+	}
 
 	// 4. Start Server
 	log.Println("🚀 Server running on http://localhost:3000")

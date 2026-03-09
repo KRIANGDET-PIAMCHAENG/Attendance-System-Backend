@@ -6,6 +6,11 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+
+	"math"
+	"strconv"
+	"strings"
+	
 )
 
 type PersonnelRepo struct {
@@ -329,4 +334,245 @@ func (r *PersonnelRepo) GetPersonnelData(managerID, personnelID string) (map[str
 		"roles":         roles,
 		"picture":       user.Picture,
 	}, nil
+}
+
+// ==========================================
+// 🌟 หมวด Statistic & Working Hours
+// ==========================================
+
+// 9. Get Working Hours Statistic (ของลูกน้อง)
+func (r *PersonnelRepo) GetManagerWorkingHoursStatistic(managerID, personnelID string) (map[string]interface{}, error) {
+	if !r.checkPermission(managerID, personnelID) {
+		return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูล")
+	}
+
+	type AttWorkHour struct {
+		Date     time.Time `gorm:"column:date"`
+		CheckIn  string    `gorm:"column:check_in"`
+		CheckOut string    `gorm:"column:check_out"`
+	}
+	var records []AttWorkHour
+	r.db.Table("attendance").
+		Select("date, check_in::text, check_out::text").
+		Where("user_id = ? AND check_in IS NOT NULL AND check_out IS NOT NULL", personnelID).
+		Scan(&records)
+
+	now := time.Now()
+	currYear, currWeek := now.ISOWeek()
+	currMonth := now.Month()
+
+	var totalHours, weeklyHours, monthlyHours, yearlyHours float64
+	totalMap := make(map[string]float64)
+	weekMap := map[string]float64{"อา.": 0, "จ.": 0, "อ.": 0, "พ.": 0, "พฤ.": 0, "ศ.": 0, "ส.": 0}
+	monthMap := make(map[string]float64)
+	for i := 1; i <= 31; i++ { monthMap[strconv.Itoa(i)] = 0 }
+	yearMap := map[string]float64{"ม.ค.": 0, "ก.พ.": 0, "มี.ค.": 0, "เม.ย.": 0, "พ.ค.": 0, "มิ.ย.": 0, "ก.ค.": 0, "ส.ค.": 0, "ก.ย.": 0, "ต.ค.": 0, "พ.ย.": 0, "ธ.ค.": 0}
+
+	distinctYears, distinctMonths, distinctWeeks := make(map[int]bool), make(map[string]bool), make(map[string]bool)
+	thaiDays := []string{"อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."}
+	thaiMonths := []string{"ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."}
+
+	for _, rec := range records {
+		inStr := strings.Split(rec.CheckIn, "+")[0]
+		outStr := strings.Split(rec.CheckOut, "+")[0]
+
+		inTime, _ := time.Parse("15:04:05", inStr)
+		outTime, _ := time.Parse("15:04:05", outStr)
+		dur := outTime.Sub(inTime).Hours()
+		
+		if dur >= 5.0 { dur -= 1.0 } // หักพักเที่ยง
+		if dur < 0 { dur = 0 }
+		dur = math.Round(dur*100) / 100
+
+		totalHours += dur
+		y, w := rec.Date.ISOWeek()
+		distinctYears[rec.Date.Year()] = true
+		distinctMonths[fmt.Sprintf("%d-%d", rec.Date.Year(), rec.Date.Month())] = true
+		distinctWeeks[fmt.Sprintf("%d-%d", y, w)] = true
+
+		thaiYear := (rec.Date.Year() + 543) % 100
+		totalMap[fmt.Sprintf("%d", thaiYear)] += dur
+
+		if y == currYear && w == currWeek {
+			weeklyHours += dur
+			weekMap[thaiDays[int(rec.Date.Weekday())]] += dur
+		}
+		if rec.Date.Year() == now.Year() && rec.Date.Month() == currMonth {
+			monthlyHours += dur
+			monthMap[strconv.Itoa(rec.Date.Day())] += dur
+		}
+		if rec.Date.Year() == now.Year() {
+			yearlyHours += dur
+			yearMap[thaiMonths[int(rec.Date.Month())-1]] += dur
+		}
+	}
+
+	var totalAvg, yearlyAvg, monthlyAvg, weeklyAvg float64
+	if len(distinctYears) > 0 { totalAvg = totalHours / float64(len(distinctYears)); yearlyAvg = totalAvg }
+	if len(distinctMonths) > 0 { monthlyAvg = totalHours / float64(len(distinctMonths)) }
+	if len(distinctWeeks) > 0 { weeklyAvg = totalHours / float64(len(distinctWeeks)) }
+
+	return map[string]interface{}{
+		"total-working-hour": math.Round(totalHours*100) / 100, "total-average-hour": math.Round(totalAvg*100) / 100,
+		"weekly-working-hour": math.Round(weeklyHours*100) / 100, "weekly-average-hour": math.Round(weeklyAvg*100) / 100,
+		"monthly-working-hour": math.Round(monthlyHours*100) / 100, "monthly-average-hour": math.Round(monthlyAvg*100) / 100,
+		"yearly-working-hour": math.Round(yearlyHours*100) / 100, "yearly-average-hour": math.Round(yearlyAvg*100) / 100,
+		"total": totalMap, "week": weekMap, "month": monthMap, "year": yearMap,
+	}, nil
+}
+
+// 10. Get Filter Range (ใช้ร่วมกันได้ทั้ง สถิติ และ ประวัติเข้างาน)
+func (r *PersonnelRepo) GetManagerStatFilterRange(managerID, personnelID string) (map[string]interface{}, error) {
+	if !r.checkPermission(managerID, personnelID) { return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูล") }
+	var bounds struct { MinDate *time.Time `gorm:"column:min_date"`; MaxDate *time.Time `gorm:"column:max_date"` }
+	r.db.Table("attendance").Select("MIN(date) as min_date, MAX(date) as max_date").Where("user_id = ?", personnelID).Scan(&bounds)
+	
+	start, end := time.Now(), time.Now()
+	if bounds.MinDate != nil { start = *bounds.MinDate }
+	if bounds.MaxDate != nil { end = *bounds.MaxDate }
+	return map[string]interface{}{ "start": start.Format("2006-01-02T15:04:05.000Z"), "end": end.Format("2006-01-02T15:04:05.000Z") }, nil
+}
+
+// ==========================================
+// 🌟 หมวด คำขอแก้ไขเวลาเข้างาน (Attendance Requests)
+// ==========================================
+
+// 11. Get Pending Attendance Requests
+func (r *PersonnelRepo) GetAttReqPending(managerID, personnelID string) ([]map[string]interface{}, error) {
+	if !r.checkPermission(managerID, personnelID) { return nil, errors.New("unauthorized") }
+	type Result struct { ID int; DateFrom time.Time `gorm:"column:date_from"`; DateTo time.Time `gorm:"column:date_to"` }
+	var rows []Result
+	r.db.Table("attendance_requests").Select("id, date_from, date_to").Where("user_id = ? AND status = 'pending'", personnelID).Scan(&rows)
+	
+	var results []map[string]interface{}
+	for _, row := range rows {
+		results = append(results, map[string]interface{}{
+			"id": fmt.Sprintf("REQ%012d", row.ID), "date-start": row.DateFrom.Format(time.RFC3339), "date-end": row.DateTo.Format(time.RFC3339),
+		})
+	}
+	if len(results) == 0 { return []map[string]interface{}{}, nil }
+	return results, nil
+}
+
+// 12. Get Recent Attendance Requests
+func (r *PersonnelRepo) GetAttReqRecent(managerID, personnelID, startDate, endDate string) ([]map[string]interface{}, error) {
+	if !r.checkPermission(managerID, personnelID) { return nil, errors.New("unauthorized") }
+	query := r.db.Table("attendance_requests").Select("id, date_from, date_to, status").Where("user_id = ? AND status != 'pending'", personnelID)
+	if startDate != "" && endDate != "" { query = query.Where("date_from >= ? AND date_from <= ?", startDate, endDate) }
+	
+	type Result struct { ID int; DateFrom time.Time; DateTo time.Time; Status string }
+	var rows []Result
+	query.Scan(&rows)
+	
+	var results []map[string]interface{}
+	for _, row := range rows {
+		results = append(results, map[string]interface{}{
+			"id": fmt.Sprintf("REQ%012d", row.ID), "date-start": row.DateFrom.Format(time.RFC3339),
+			"date-end": row.DateTo.Format(time.RFC3339), "status": row.Status,
+		})
+	}
+	if len(results) == 0 { return []map[string]interface{}{}, nil }
+	return results, nil
+}
+
+// 13. Get Attendance Request Filter Range
+func (r *PersonnelRepo) GetAttReqFilterRange(managerID, personnelID string) (map[string]interface{}, error) {
+	if !r.checkPermission(managerID, personnelID) { return nil, errors.New("unauthorized") }
+	var res struct { Start *time.Time `gorm:"column:start_date"`; End *time.Time `gorm:"column:end_date"` }
+	r.db.Table("attendance_requests").Select("MIN(date_from) as start_date, MAX(date_to) as end_date").Where("user_id = ?", personnelID).Scan(&res)
+	start, end := time.Now(), time.Now()
+	if res.Start != nil { start = *res.Start }; if res.End != nil { end = *res.End }
+	return map[string]interface{}{ "start": start.Format("2006-01-02T15:04:05.000Z"), "end": end.Format("2006-01-02T15:04:05.000Z") }, nil
+}
+
+// 14. Get Attendance Request Detail (ตัด REQ มาจาก Handler แล้ว)
+func (r *PersonnelRepo) GetAttReqDetail(managerID string, reqID int) (map[string]interface{}, error) {
+	var req struct {
+		UserID string; DateFrom time.Time; DateTo time.Time; StartTime string; EndTime string; Remark string; Status string; CreatedAt time.Time
+	}
+	if err := r.db.Table("attendance_requests").Where("id = ?", reqID).First(&req).Error; err != nil { return nil, errors.New("ไม่พบใบคำขอนี้") }
+	if !r.checkPermission(managerID, req.UserID) { return nil, errors.New("unauthorized") }
+
+	var files []map[string]interface{}
+	r.db.Table("attendance_request_attachments").Where("attendance_request_id = ?", reqID).
+		Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").Find(&files)
+	baseURL := "http://20.194.9.179:3000/" 
+	for i := range files {
+		if path, ok := files[i]["file-url"].(string); ok && path != "" && !strings.HasPrefix(path, "http") {
+			if path[0] == '/' { path = path[1:] }; files[i]["file-url"] = baseURL + path
+		}
+	}
+
+	var app struct { ApproverName string; ApproveRole string; Reason string; CreatedAt time.Time }
+	r.db.Table("attendance_approvals").Where("attendance_request_id = ?", reqID).First(&app)
+
+	if app.ApproveRole == "" { // หาคนอนุมัติล่วงหน้าถ้ายัง Pending
+		r.db.Table("subordinate_manager_roles smr").Select("r.role_name").Joins("JOIN role r ON smr.manager_role_id = r.role_id").
+			Where("smr.subordinate_id = ? AND r.role_type = ?", req.UserID, "main").Limit(1).Scan(&app.ApproveRole)
+	}
+
+	return map[string]interface{}{
+		"request-detail": map[string]interface{}{
+			"date-from": req.DateFrom.Format(time.RFC3339), "date-to": req.DateTo.Format(time.RFC3339),
+			"time-start": req.StartTime[:5], "time-end": req.EndTime[:5], "remark": req.Remark, "evidence-files": files,
+		},
+		"approve-detail": map[string]interface{}{
+			"status": req.Status, "approve-role": app.ApproveRole, "approver": app.ApproverName,
+			"reason": app.Reason, "approve-date": app.CreatedAt.Format(time.RFC3339),
+		},
+	}, nil
+}
+
+// ==========================================
+// 🌟 หมวด ประวัติการเข้างาน (Attendance History)
+// ==========================================
+
+// 15. Get Attendance History
+func (r *PersonnelRepo) GetAttendanceHistory(managerID, personnelID, startDate, endDate string) ([]map[string]interface{}, error) {
+	if !r.checkPermission(managerID, personnelID) { return nil, errors.New("unauthorized") }
+	
+	type AttRec struct { Date time.Time; CheckIn *string `gorm:"column:check_in"`; CheckOut *string `gorm:"column:check_out"` }
+	var records []AttRec
+	query := r.db.Table("attendance").Select("date, check_in::text, check_out::text").Where("user_id = ?", personnelID)
+	if startDate != "" && endDate != "" { query = query.Where("date >= ? AND date <= ?", startDate, endDate) }
+	query.Order("date DESC").Scan(&records)
+
+	// ดึงข้อมูลการลาที่อนุมัติแล้วมาเพื่อเช็คสถานะ leavePeriod
+	type LeaveReq struct { DateFrom time.Time; DateTo time.Time; FromMorn bool `gorm:"column:from_date_morning"`; ToMorn bool `gorm:"column:to_date_morning"` }
+	var leaves []LeaveReq
+	leaveQ := r.db.Table("leave_requests").Where("user_id = ? AND status = 'approved'", personnelID)
+	if startDate != "" && endDate != "" { leaveQ = leaveQ.Where("date_from <= ? AND date_to >= ?", endDate, startDate) }
+	leaveQ.Scan(&leaves)
+
+	thaiDOW := []string{"อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"}
+	var results []map[string]interface{}
+
+	for _, rec := range records {
+		cIn, cOut := interface{}(nil), interface{}(nil)
+		if rec.CheckIn != nil { cIn = (*rec.CheckIn)[:5] }
+		if rec.CheckOut != nil { cOut = (*rec.CheckOut)[:5] }
+
+		leavePeriod := "NONE"
+		for _, lv := range leaves {
+			if (rec.Date.Equal(lv.DateFrom) || rec.Date.After(lv.DateFrom)) && (rec.Date.Equal(lv.DateTo) || rec.Date.Before(lv.DateTo)) {
+				isStart := rec.Date.Equal(lv.DateFrom)
+				isEnd := rec.Date.Equal(lv.DateTo)
+				if isStart && isEnd {
+					if lv.FromMorn && !lv.ToMorn { leavePeriod = "FULL_DAY" } else if lv.FromMorn && lv.ToMorn { leavePeriod = "MORNING" } else if !lv.FromMorn && !lv.ToMorn { leavePeriod = "AFTERNOON" } else { leavePeriod = "FULL_DAY" }
+				} else if isStart {
+					if lv.FromMorn { leavePeriod = "FULL_DAY" } else { leavePeriod = "AFTERNOON" }
+				} else if isEnd {
+					if !lv.ToMorn { leavePeriod = "FULL_DAY" } else { leavePeriod = "MORNING" }
+				} else { leavePeriod = "FULL_DAY" }
+				break
+			}
+		}
+
+		results = append(results, map[string]interface{}{
+			"date": rec.Date.Format("2006-01-02"), "dow": thaiDOW[int(rec.Date.Weekday())],
+			"checkIn": cIn, "checkOut": cOut, "leavePeriod": leavePeriod,
+		})
+	}
+	if len(results) == 0 { return []map[string]interface{}{}, nil }
+	return results, nil
 }
