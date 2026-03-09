@@ -114,27 +114,32 @@ func (r *UserRepo) CheckOverlappingLeave(userID string, startDate string, endDat
 
 	return count > 0, nil // ถ้า count > 0 แปลว่ามีการซ้อนทับ
 }
-
-// 1. ดึงข้อมูลที่รออนุมัติ (Pending)
+// 1. Get Pending (ดึงเฉพาะใบลาที่ยัง "ไม่ถึงเวลา")
 func (r *UserRepo) GetPendingLeaves(userID string) ([]LeaveStatusRecord, error) {
 	var leaves []LeaveStatusRecord
+	// 🌟 [เพิ่ม AND date_from >= CURRENT_TIMESTAMP] เพื่อเตะใบลาในอดีตออกไป
 	sql := `SELECT id, leave_type, date_from, status 
-			FROM leave_requests 
-			WHERE user_id = $1 AND status = 'pending' 
-			ORDER BY date_from DESC`
+            FROM leave_requests 
+            WHERE user_id = $1 AND status = 'pending' AND date_from >= CURRENT_TIMESTAMP
+            ORDER BY date_from DESC`
 
 	err := r.db.Raw(sql, userID).Scan(&leaves).Error
 	return leaves, err
 }
 
+// 2. Get Recent (ดึงประวัติ และใบลาที่ "เลยเวลา")
 func (r *UserRepo) GetRecentLeaves(userID string, startDate string, endDate string) ([]LeaveStatusRecord, error) {
 	var leaves []LeaveStatusRecord
 
-	// Query: ดึงรายการที่ (ไม่ใช่ pending) OR (เป็น pending แต่เลยกำหนดวันลาแล้ว)
-	query := `SELECT id, leave_type, date_from, status 
-			  FROM leave_requests 
-			  WHERE user_id = ? 
-			    AND (status != 'pending' OR (status = 'pending' AND date_from < CURRENT_TIMESTAMP))`
+	// 🌟 [ใช้ท่าไม้ตาย CASE WHEN] แปลง pending ที่เลยเวลา ให้กลายเป็น overdue ตั้งแต่ออกมาจาก DB เลย!
+	query := `SELECT id, leave_type, date_from, 
+                CASE 
+                    WHEN status = 'pending' AND date_from < CURRENT_TIMESTAMP THEN 'overdue' 
+                    ELSE status 
+                END as status
+              FROM leave_requests 
+              WHERE user_id = ? 
+                AND (status != 'pending' OR (status = 'pending' AND date_from < CURRENT_TIMESTAMP))`
 
 	args := []interface{}{userID}
 

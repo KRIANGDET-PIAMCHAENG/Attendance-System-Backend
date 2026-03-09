@@ -144,9 +144,10 @@ func main() {
 		{
 			leave_status.GET("/pending", leaveHdl.GetPendingLeaves)
 			leave_status.GET("/recent", leaveHdl.GetRecentLeaves)
-			leave_status.GET("/filter_range", leaveHdl.GetLeaveFilterRange)
 
 			leave_status.GET("/detail", leaveHdl.GetLeaveDetail)
+
+			leave_status.GET("/filter_range", leaveHdl.GetLeaveFilterRange)
 
 		}
 
