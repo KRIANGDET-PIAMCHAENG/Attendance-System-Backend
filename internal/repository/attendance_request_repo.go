@@ -87,7 +87,8 @@ func (r *UserRepo) GetAttendanceFilterRange(userID string) (time.Time, time.Time
 }
 
 // 5. ดึงรายละเอียดคำขอ (พร้อมไฟล์แนบ + ข้อมูลผู้อนุมัติ)
-func (r *UserRepo) GetAttendanceDetail(userID string, reqID int) (*AttendanceRequest, string, error) {
+// 🌟 [แก้ตรงนี้] เพิ่ม return string อีก 1 ตัว สำหรับส่งค่า expectedRole กลับไป
+func (r *UserRepo) GetAttendanceDetail(userID string, reqID int) (*AttendanceRequest, string, string, error) {
 	var request AttendanceRequest
 	// ใช้ Preload ดึงทั้ง Attachments และ Approval มาพร้อมกัน
 	err := r.db.Preload("Attachments").Preload("Approval").
@@ -95,21 +96,33 @@ func (r *UserRepo) GetAttendanceDetail(userID string, reqID int) (*AttendanceReq
 		First(&request).Error
 
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 
-	// ค้นหาชื่อผู้อนุมัติ (ถ้ามีคนอนุมัติแล้ว)
 	var approverName string
+	var expectedRole string
+
+	// ถ้ามีคนอนุมัติแล้ว (ประวัติถูกสร้างแล้ว)
 	if request.Approval != nil && request.Approval.ApproverID != "" {
-		// ⚠️ หมายเหตุ: ปรับโค้ดใน Select ให้ตรงกับชื่อคอลัมน์ในตาราง user_info ของคุณ (เช่น first_name, last_name)
+		// ⚠️ หมายเหตุ: ปรับโค้ดใน Select ให้ตรงกับชื่อคอลัมน์ในตาราง user_info ของคุณ
 		r.db.Table("user_info").
-			Select("first_name || ' ' || last_name"). 
+			Select("fullname_thai"). // หรือ "first_name || ' ' || last_name" ตามที่ลูกพี่ใช้
 			Where("user_id = ?", request.Approval.ApproverID).
 			Scan(&approverName)
+
+		expectedRole = request.Approval.ApproveRole
+	} else {
+		// 🌟 [NEW LOGIC] ถ้ายังไม่มีประวัติการอนุมัติ ให้ไปหาตำแหน่งหัวหน้าล่วงหน้า
+		r.db.Table("subordinate_manager_roles smr").
+			Select("r.role_name").
+			Joins("JOIN role r ON smr.manager_role_id = r.role_id").
+			Where("smr.subordinate_id = ? AND r.role_type = ?", userID, "main").
+			Limit(1).
+			Scan(&expectedRole)
 	}
 
-	// คืนค่ากลับไป 3 อย่าง: ข้อมูลใบลา, ชื่อคนอนุมัติ, และ error
-	return &request, approverName, nil
+	// คืนค่ากลับไป 4 อย่าง: ข้อมูลคำขอ, ชื่อคนอนุมัติ, ตำแหน่งผู้อนุมัติ(ล่วงหน้า), และ error
+	return &request, approverName, expectedRole, nil
 }
 
 // 6. ยกเลิกคำขอ (Soft Delete - เปลี่ยนสถานะเป็น canceled)

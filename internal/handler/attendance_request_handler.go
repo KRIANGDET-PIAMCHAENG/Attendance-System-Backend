@@ -181,8 +181,8 @@ func (h *AttendanceReqHandler) GetAttendanceDetail(c *gin.Context) {
 		return
 	}
 
-	// 🌟 รับค่า approverName เพิ่มมาด้วย
-	request, approverName, err := h.repo.GetAttendanceDetail(userID, reqID)
+	// 🌟 [แก้ตรงนี้] รับค่า expectedRole เพิ่มเข้ามาจาก Repo
+	request, approverName, expectedRole, err := h.repo.GetAttendanceDetail(userID, reqID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "ดึงข้อมูลไม่สำเร็จ"})
 		return
@@ -199,20 +199,23 @@ func (h *AttendanceReqHandler) GetAttendanceDetail(c *gin.Context) {
 		})
 	}
 
+	if evidenceFiles == nil {
+		evidenceFiles = []map[string]interface{}{}
+	}
+
 	// 🌟 จัดโครงสร้างส่วน approve-detail
 	approveDetail := map[string]interface{}{
-		"status": request.Status, // ดึงสถานะปัจจุบันมาแสดงเสมอ (pending, approved, rejected)
+		"status":       request.Status, 
+		"approve-role": expectedRole, // 👈 ยัดตำแหน่งหัวหน้าล่วงหน้าใส่ตรงนี้เลย!
 	}
 
 	if request.Approval != nil {
 		// ถ้ามีประวัติการอนุมัติแล้ว ให้เติมข้อมูลลงไป
-		approveDetail["approve-role"] = request.Approval.ApproveRole
 		approveDetail["approver"] = approverName
 		approveDetail["reason"] = request.Approval.Reason
 		approveDetail["approve-date"] = request.Approval.CreatedAt.Format(time.RFC3339)
 	} else {
-		// ถ้ายังไม่มี (เช่น กำลัง pending) ให้เป็นค่าว่างไปก่อน
-		approveDetail["approve-role"] = ""
+		// ถ้ายังไม่มี (เช่น กำลัง pending) ให้เป็นค่าว่างไปก่อน จะได้ไม่ติดวันที่ 0001-01-01T...
 		approveDetail["approver"] = ""
 		approveDetail["reason"] = ""
 		approveDetail["approve-date"] = ""
@@ -223,12 +226,11 @@ func (h *AttendanceReqHandler) GetAttendanceDetail(c *gin.Context) {
 		"request-detail": map[string]interface{}{
 			"date-from":      request.DateFrom.Format(time.RFC3339),
 			"date-to":        request.DateTo.Format(time.RFC3339),
-			"time-start":     request.StartTime, // แก้ชื่อคีย์แล้ว
-			"time-end":       request.EndTime,   // แก้ชื่อคีย์แล้ว
+			"time-start":     request.StartTime, 
+			"time-end":       request.EndTime,   
 			"remark":         request.Remark,
 			"evidence-files": evidenceFiles,
-			// "request-date":   request.CreatedAt.Format(time.RFC3339), // เพิ่ม request-date แล้ว
-			// "signature-url": baseURL + request.SignaturePath, // ถ้า Frontend ไม่ได้ใช้ ก็เอาออกได้ครับ หรือจะใส่ไว้เผื่อก็ได้
+			// "request-date":   request.CreatedAt.Format(time.RFC3339),
 		},
 		"approve-detail": approveDetail,
 	})

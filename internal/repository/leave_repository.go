@@ -193,20 +193,20 @@ type LeaveAttachmentRecord struct {
 	FileSize     int64  `gorm:"column:file_size"` // เพิ่ม tag
 }
 
-// 2. ฟังก์ชัน GetLeaveDetail (ใช้ LEFT JOIN)
+// 2. ฟังก์ชัน GetLeaveDetail (ใช้ LEFT JOIN และหาผู้อนุมัติล่วงหน้า)
 func (r *UserRepo) GetLeaveDetail(userID string, leaveID int) (*LeaveDetailRecord, []LeaveAttachmentRecord, error) {
 	var detail LeaveDetailRecord
 
-	// ดึงข้อมูลใบลาหลัก พร้อมข้อมูลผู้อนุมัติล่าสุด (ถ้ามี)
+	// 1. ดึงข้อมูลใบลาหลัก พร้อมข้อมูลผู้อนุมัติล่าสุด (ถ้ามีคนกดอนุมัติ/ปฏิเสธแล้ว)
 	err := r.db.Table("leave_requests lr").
 		Select(`
-			lr.id, lr.leave_type, lr.date_from, lr.date_to, 
-			lr.from_date_morning, lr.to_date_morning, lr.remark, lr.created_at, lr.status,
-			la.approver_name as approver, 
-			la.approve_role, 
-			la.reason as approve_reason, 
-			la.created_at as approve_date
-		`).
+            lr.id, lr.leave_type, lr.date_from, lr.date_to, 
+            lr.from_date_morning, lr.to_date_morning, lr.remark, lr.created_at, lr.status,
+            la.approver_name as approver, 
+            la.approve_role, 
+            la.reason as approve_reason, 
+            la.created_at as approve_date
+        `).
 		Joins("LEFT JOIN leave_approvals la ON la.leave_request_id = lr.id").
 		Where("lr.id = ? AND lr.user_id = ?", leaveID, userID).
 		Order("la.created_at DESC"). // ถ้ามีการอนุมัติหลายรอบ เอาล่าสุดมาแสดง
@@ -216,10 +216,27 @@ func (r *UserRepo) GetLeaveDetail(userID string, leaveID int) (*LeaveDetailRecor
 		return nil, nil, err
 	}
 
-	// ดึงข้อมูลไฟล์แนบ (หมายเหตุ: ถ้าตาราง leave_attachments ของคุณไม่มีฟิลด์ file_size หรือ file_type ให้ลบออกจาก Select ตรงนี้ด้วยนะครับ)
+	// 🌟 [NEW LOGIC แก้เรื่อง Pointer *string] 
+	// เช็คว่า ApproveRole เป็น nil (คือ NULL ใน DB) หรือถ้าแกะค่ามาแล้วเป็น "" ให้ไปค้นหาตำแหน่งหัวหน้า
+	if detail.ApproveRole == nil || *detail.ApproveRole == "" {
+		var expectedRoleName string
+		r.db.Table("subordinate_manager_roles smr").
+			Select("r.role_name").
+			Joins("JOIN role r ON smr.manager_role_id = r.role_id").
+			Where("smr.subordinate_id = ? AND r.role_type = ?", userID, "main").
+			Limit(1).
+			Scan(&expectedRoleName)
+
+		// ยัดค่ากลับไป โดยใส่ & นำหน้าเพื่อแปลง string เป็น *string
+		if expectedRoleName != "" {
+			detail.ApproveRole = &expectedRoleName
+		}
+	}
+
+	// 2. ดึงข้อมูลไฟล์แนบ
 	var attachments []LeaveAttachmentRecord
 	r.db.Table("leave_attachments").
-		Select("original_name, file_path, file_type, file_size"). // ✅ เพิ่ม 2 คอลัมน์นี้เข้าไป
+		Select("original_name, file_path, file_type, file_size"). 
 		Where("leave_request_id = ?", leaveID).
 		Find(&attachments)
 
