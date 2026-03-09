@@ -266,6 +266,9 @@ func main() {
 			// 📅 Attendance History
 			personnel.GET("/attendance/history", personnelHdl.GetAttendanceHistory)
 			personnel.GET("/attendance/filter_range", personnelHdl.GetManagerStatFilterRange) // ใช้ฟังก์ชันร่วมกับ Statistic ได้เลย
+			personnel.GET("/statistic", personnelHdl.GetStatistic)
+
+			
 
 		}
 	}

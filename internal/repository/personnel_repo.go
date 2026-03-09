@@ -6,10 +6,12 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-
+	
 	"math"
 	"strconv"
 	"strings"
+
+	"encoding/json"
 	
 )
 
@@ -493,7 +495,7 @@ func (r *PersonnelRepo) GetAttReqDetail(managerID string, reqID int) (map[string
 	if err := r.db.Table("attendance_requests").Where("id = ?", reqID).First(&req).Error; err != nil { return nil, errors.New("ไม่พบใบคำขอนี้") }
 	if !r.checkPermission(managerID, req.UserID) { return nil, errors.New("unauthorized") }
 
-	var files []map[string]interface{}
+	files := []map[string]interface{}{}
 	r.db.Table("attendance_request_attachments").Where("attendance_request_id = ?", reqID).
 		Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").Find(&files)
 	baseURL := "http://20.194.9.179:3000/" 
@@ -575,4 +577,227 @@ func (r *PersonnelRepo) GetAttendanceHistory(managerID, personnelID, startDate, 
 	}
 	if len(results) == 0 { return []map[string]interface{}{}, nil }
 	return results, nil
+}
+
+func (r *PersonnelRepo) GetStatistic(managerID, personnelID string, year int) (map[string]interface{}, error) {
+	// 🛡️ 1. เช็คสิทธิ์ (RBAC) Manager ต้องมีสิทธิ์ดูคนนี้เท่านั้น
+	if !r.checkPermission(managerID, personnelID) {
+		return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูลของพนักงานท่านนี้")
+	}
+
+	// 2. ดึง Config ปีงบประมาณ (Budget Year)
+	var budgetConfig struct {
+		ConfigValue string `gorm:"column:config_value"`
+	}
+	r.db.Table("system_configs").Where("config_key = ?", "budget_year").First(&budgetConfig)
+	
+	startMonth, startDay := 1, 1
+	if budgetConfig.ConfigValue != "" {
+		var cfg map[string]int
+		json.Unmarshal([]byte(budgetConfig.ConfigValue), &cfg)
+		if m, ok := cfg["month"]; ok { startMonth = m }
+		if d, ok := cfg["day"]; ok { startDay = d }
+	}
+
+	// คำนวณวันเริ่มและวันสิ้นสุดของปีงบประมาณที่ระบุ
+	var startDate, endDate time.Time
+	if startMonth > 1 {
+		startDate = time.Date(year-1, time.Month(startMonth), startDay, 0, 0, 0, 0, time.Local)
+		endDate = startDate.AddDate(1, 0, -1)
+	} else {
+		startDate = time.Date(year, time.Month(startMonth), startDay, 0, 0, 0, 0, time.Local)
+		endDate = startDate.AddDate(1, 0, -1)
+	}
+
+	// ⏳ calcEndDate: ถ้าเป็นปีปัจจุบัน ให้คำนวณสถิติถึงแค่ "วันนี้" เพื่อไม่ให้วันในอนาคตกลายเป็นขาดงาน
+	today := time.Now()
+	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.Local)
+	calcEndDate := endDate
+	if todayDate.Before(endDate) {
+		calcEndDate = todayDate
+	}
+
+	// 3. ดึง Config เวลาเข้างาน (เพื่อเช็คว่ามาสายไหม)
+	var attConfig struct {
+		ConfigValue string `gorm:"column:config_value"`
+	}
+	r.db.Table("system_configs").Where("config_key = ?", "attendance_time").First(&attConfig)
+	checkInHour, checkInMinute := 8, 30 // ค่า Default กรณีหา Config ไม่เจอ
+	if attConfig.ConfigValue != "" {
+		var cfg map[string]interface{}
+		json.Unmarshal([]byte(attConfig.ConfigValue), &cfg)
+		if cTime, ok := cfg["check-in-time"].(map[string]interface{}); ok {
+			if h, ok := cTime["hour"].(float64); ok { checkInHour = int(h) }
+			if m, ok := cTime["minute"].(float64); ok { checkInMinute = int(m) }
+		}
+	}
+	checkInLimitStr := fmt.Sprintf("%02d:%02d:00", checkInHour, checkInMinute)
+
+	// 4. ดึงวันหยุดบริษัทในช่วงปีงบประมาณนั้น
+	var holidayDates []time.Time
+	r.db.Table("company_holidays").
+		Where("holiday_date >= ? AND holiday_date <= ?", startDate, endDate).
+		Pluck("holiday_date", &holidayDates)
+	
+	holidayMap := make(map[string]bool)
+	for _, hd := range holidayDates {
+		holidayMap[hd.Format("2006-01-02")] = true
+	}
+
+	// 5. ดึงสิทธิ์การลา (Leave Quotas)
+	type LeaveBalanceRow struct {
+		LeaveType string  `gorm:"column:name_en"`
+		Quota     float64 `gorm:"column:days_allowed"`
+	}
+	var balances []LeaveBalanceRow
+	r.db.Table("leave_balances lb").
+		Select("lt.name_en, lb.days_allowed").
+		Joins("JOIN leave_types lt ON lb.leave_type_id = lt.id").
+		Where("lb.user_id = ? AND lb.year = ?", personnelID, year).
+		Scan(&balances)
+
+	leaveQuotas := make(map[string]float64)
+	for _, b := range balances {
+		leaveQuotas[b.LeaveType] = b.Quota
+	}
+
+	// ดึงประเภทการลาทั้งหมด เผื่อบางประเภทโควต้าเป็น 0 ก็ต้องส่งกลับไปให้ Frontend
+	var allTypes []struct{ NameEn string `gorm:"column:name_en"` }
+	r.db.Table("leave_types").Scan(&allTypes)
+	for _, t := range allTypes {
+		if _, ok := leaveQuotas[t.NameEn]; !ok {
+			leaveQuotas[t.NameEn] = 0.0 
+		}
+	}
+
+	// 6. ดึงข้อมูลประวัติการลาที่ "อนุมัติแล้ว (approved)"
+	type LeaveReq struct {
+		LeaveType   string    `gorm:"column:leave_type"`
+		DateFrom    time.Time `gorm:"column:date_from"`
+		DateTo      time.Time `gorm:"column:date_to"`
+		FromMorning bool      `gorm:"column:from_date_morning"`
+		ToMorning   bool      `gorm:"column:to_date_morning"`
+	}
+	var leaves []LeaveReq
+	r.db.Table("leave_requests").
+		Where("user_id = ? AND status = 'approved' AND date_from <= ? AND date_to >= ?", personnelID, endDate, startDate).
+		Scan(&leaves)
+
+	leaveUsed := make(map[string]float64)
+	fullLeaveDaysMap := make(map[string]bool)
+
+	// คำนวณวันลาที่ใช้ไป (รองรับการลาครึ่งวัน และข้ามวันหยุด)
+	for _, lv := range leaves {
+		curr := lv.DateFrom
+		for !curr.After(lv.DateTo) {
+			dateStr := curr.Format("2006-01-02")
+			isWeekend := curr.Weekday() == time.Saturday || curr.Weekday() == time.Sunday
+			isHoliday := holidayMap[dateStr]
+
+			if !isWeekend && !isHoliday {
+				dayVal := 1.0
+				// ลาแค่วันเดียว แต่เลือกเป็นครึ่งวัน
+				if curr.Equal(lv.DateFrom) && curr.Equal(lv.DateTo) {
+					if !lv.FromMorning || lv.ToMorning { dayVal = 0.5 }
+				} else {
+					// ลาหลายวัน (เช็ควันหัว-ท้าย)
+					if curr.Equal(lv.DateFrom) && !lv.FromMorning { dayVal = 0.5 }
+					if curr.Equal(lv.DateTo) && lv.ToMorning { dayVal = 0.5 }
+				}
+
+				leaveUsed[lv.LeaveType] += dayVal
+				
+				// ถ้าลาเต็มวัน ให้จดไว้ว่าวันนี้ลา จะได้ไม่ถูกนับเป็น ขาดงาน (absent)
+				if dayVal == 1.0 { 
+					fullLeaveDaysMap[dateStr] = true 
+				}
+			}
+			curr = curr.AddDate(0, 0, 1)
+		}
+	}
+
+	// 7. ดึงข้อมูลการสแกนนิ้วเข้างาน (Attendance)
+	type AttRecord struct {
+		Date    time.Time `gorm:"column:date"`
+		CheckIn string    `gorm:"column:check_in"` 
+	}
+	var attendances []AttRecord
+	r.db.Table("attendance").
+		Select("date, check_in::text").
+		Where("user_id = ? AND date >= ? AND date <= ?", personnelID, startDate, calcEndDate).
+		Scan(&attendances)
+
+	attMap := make(map[string]string)
+	for _, a := range attendances {
+		attMap[a.Date.Format("2006-01-02")] = a.CheckIn
+	}
+
+	// 8. 🚀 เริ่มจำลองวัน (Loop Day-by-Day) เพื่อหา ขาด/ลา/มาสาย/ตรงเวลา
+	var totalWorkDays, actualWorkDays, onTimeDays, lateDays, absentDays int
+
+	curr := startDate
+	for !curr.After(calcEndDate) {
+		dateStr := curr.Format("2006-01-02")
+		isWeekend := curr.Weekday() == time.Saturday || curr.Weekday() == time.Sunday
+		isHoliday := holidayMap[dateStr]
+
+		// ถ้าเป็นวันทำงานปกติ (ไม่ใช่วันเสาร์-อาทิตย์ และ ไม่ใช่วันหยุดบริษัท)
+		if !isWeekend && !isHoliday {
+			totalWorkDays++
+
+			checkInTime, hasAtt := attMap[dateStr]
+			if hasAtt && checkInTime != "" {
+				// มาทำงาน
+				actualWorkDays++
+				if checkInTime <= checkInLimitStr {
+					onTimeDays++
+				} else {
+					lateDays++
+				}
+			} else {
+				// ไม่ได้มาทำงาน -> เช็คต่อว่าได้ "ลาเต็มวัน" ไหม?
+				// ถ้าไม่ได้ลาเต็มวัน และ วันนั้นผ่านไปแล้ว (เมื่อวานลงไป) -> ถือว่าขาดงาน
+				if !fullLeaveDaysMap[dateStr] && curr.Before(todayDate) {
+					absentDays++
+				}
+			}
+		}
+		curr = curr.AddDate(0, 0, 1)
+	}
+
+	// 9. ประกอบร่างจัด Format JSON ส่วนของวันลา (Leave Detail)
+	totalLeaveDays := 0.0
+	overLeaveDays := 0.0
+	leavesOutput := make(map[string]interface{})
+
+	for _, t := range allTypes {
+		used := leaveUsed[t.NameEn]
+		quota := leaveQuotas[t.NameEn]
+		
+		totalLeaveDays += used
+		if used > quota {
+			overLeaveDays += (used - quota)
+		}
+
+		leavesOutput[t.NameEn] = map[string]interface{}{
+			"used_days":  used,
+			"quota_days": quota,
+		}
+	}
+
+	// 10. ส่งคืนผลลัพธ์โครงสร้างตามที่ Frontend หวังไว้เป๊ะๆ
+	return map[string]interface{}{
+		"total_work_days":  totalWorkDays,
+		"actual_work_days": actualWorkDays,
+		"attendance_detail": map[string]interface{}{
+			"on_time_days": onTimeDays,
+			"late_days":    lateDays,
+			"absent_days":  absentDays,
+		},
+		"leave_detail": map[string]interface{}{
+			"total_leave_days": totalLeaveDays,
+			"over_leave_days":  overLeaveDays,
+			"leaves":           leavesOutput,
+		},
+	}, nil
 }
