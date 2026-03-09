@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"encoding/json"
+	"sort"          // 👈 เพิ่มอันนี้
+
 	
 )
 
@@ -429,7 +431,6 @@ func (y YearStat) MarshalJSON() ([]byte, error) {
 }
 
 func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) (map[string]interface{}, error) {
-	// 1. 🛡️ เช็คสิทธิ์
 	if !r.checkPermission(managerID, personnelID) {
 		return nil, errors.New("unauthorized: ไม่มีสิทธิ์ดูข้อมูลของพนักงานท่านนี้")
 	}
@@ -438,8 +439,7 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 	currentYear := now.Year()
 	currentMonth := now.Month()
 
-	// 2. 📅 หาวันเริ่มต้นและสิ้นสุดของ Week และ Month
-	offset := int(now.Weekday()) // 0 = Sunday
+	offset := int(now.Weekday())
 	startOfWeek := time.Date(currentYear, currentMonth, now.Day()-offset, 0, 0, 0, 0, time.Local)
 	endOfWeek := startOfWeek.AddDate(0, 0, 6)
 
@@ -447,7 +447,6 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 	daysInMonth := startOfMonth.AddDate(0, 1, -1).Day()
 	endOfMonth := time.Date(currentYear, currentMonth, daysInMonth, 0, 0, 0, 0, time.Local)
 
-	// 3. 🏖️ โหลดวันหยุดบริษัท/ราชการ
 	var holidays []time.Time
 	r.db.Table("company_holidays").Select("holiday_date").Pluck("holiday_date", &holidays)
 	holidayMap := make(map[string]bool)
@@ -455,7 +454,6 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 		holidayMap[h.Format("2006-01-02")] = true
 	}
 
-	// 4. 🎯 นับ "วันทำงานจริง" เพื่อเอาไปเป็นตัวหาร Average
 	workingDaysInWeek := 0
 	for d := startOfWeek; !d.After(endOfWeek); d = d.AddDate(0, 0, 1) {
 		if d.Weekday() != time.Saturday && d.Weekday() != time.Sunday && !holidayMap[d.Format("2006-01-02")] {
@@ -470,7 +468,7 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 		}
 	}
 
-	// 5. 📦 สร้าง Map รอรับค่า (เพื่อให้มี Key ครบทุกวัน/ทุกเดือน ส่งไปให้ Frontend)
+	// 🌟 1. ประกาศลำดับ (Keys) ที่ต้องการให้แสดงใน JSON เป๊ะๆ
 	thaiDays := map[time.Weekday]string{
 		time.Sunday: "อา.", time.Monday: "จ.", time.Tuesday: "อ.",
 		time.Wednesday: "พ.", time.Thursday: "พฤ.", time.Friday: "ศ.", time.Saturday: "ส.",
@@ -482,20 +480,30 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 		time.October: "ต.ค.", time.November: "พ.ย.", time.December: "ธ.ค.",
 	}
 
-	weekMap := map[string]float64{"อา.": 0.0, "จ.": 0.0, "อ.": 0.0, "พ.": 0.0, "พฤ.": 0.0, "ศ.": 0.0, "ส.": 0.0}
+	weekKeys := []string{"อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."}
+	weekMap := make(map[string]float64)
+	for _, k := range weekKeys {
+		weekMap[k] = 0.0
+	}
+
+	monthKeys := []string{}
 	monthMap := make(map[string]float64)
 	for i := 1; i <= daysInMonth; i++ {
-		monthMap[strconv.Itoa(i)] = 0.0
+		k := strconv.Itoa(i)
+		monthKeys = append(monthKeys, k)
+		monthMap[k] = 0.0
 	}
-	yearMap := map[string]float64{
-		"ม.ค.": 0.0, "ก.พ.": 0.0, "มี.ค.": 0.0, "เม.ย.": 0.0, "พ.ค.": 0.0, "มิ.ย.": 0.0,
-		"ก.ค.": 0.0, "ส.ค.": 0.0, "ก.ย.": 0.0, "ต.ค.": 0.0, "พ.ย.": 0.0, "ธ.ค.": 0.0,
-	}
-	totalMap := make(map[string]float64)
 
+	yearKeys := []string{"ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."}
+	yearMap := make(map[string]float64)
+	for _, k := range yearKeys {
+		yearMap[k] = 0.0
+	}
+
+	totalMap := make(map[string]float64)
 	var totalWorkingHour, weeklyWorkingHour, monthlyWorkingHour, yearlyWorkingHour float64
 
-	// 6. ⏱️ ดึงข้อมูลและคำนวณ
+	// 🌟 2. ดึงข้อมูลและคำนวณตามเดิม
 	type AttRecord struct {
 		Date     time.Time
 		CheckIn  string `gorm:"column:check_in"`
@@ -508,7 +516,6 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 		Scan(&atts)
 
 	for _, att := range atts {
-		// ถ้าเป็นวันหยุด ไม่เอามาคิดชั่วโมง (ปล่อยให้ค่าใน Map เป็น 0.0)
 		if att.Date.Weekday() == time.Saturday || att.Date.Weekday() == time.Sunday || holidayMap[att.Date.Format("2006-01-02")] {
 			continue
 		}
@@ -519,32 +526,27 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 			continue
 		}
 
-		// คำนวณเวลา (หักลบกันตรงๆ)
 		duration := outTime.Sub(inTime).Hours()
 		if duration < 0 {
-			duration += 24 // ดักเคสข้ามคืน
+			duration += 24
 		}
 		duration = math.Round(duration*100) / 100
 
-		// --- Total ---
 		totalWorkingHour += duration
-		buddhistYear := strconv.Itoa(att.Date.Year() + 543)[2:] // ดึงปี พ.ศ. สองตัวท้าย
+		buddhistYear := strconv.Itoa(att.Date.Year() + 543)[2:]
 		totalMap[buddhistYear] += duration
 
-		// --- Yearly ---
 		if att.Date.Year() == currentYear {
 			yearlyWorkingHour += duration
 			yearMap[thaiMonths[att.Date.Month()]] += duration
 		}
 
-		// --- Monthly ---
 		if att.Date.Year() == currentYear && att.Date.Month() == currentMonth {
 			monthlyWorkingHour += duration
 			dayStr := strconv.Itoa(att.Date.Day())
 			monthMap[dayStr] += duration
 		}
 
-		// --- Weekly ---
 		attDateOnly := time.Date(att.Date.Year(), att.Date.Month(), att.Date.Day(), 0, 0, 0, 0, time.Local)
 		if !attDateOnly.Before(startOfWeek) && !attDateOnly.After(endOfWeek) {
 			weeklyWorkingHour += duration
@@ -552,9 +554,7 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 		}
 	}
 
-	// 7. ⚖️ คำนวณ Average
 	weeklyAverageHour, monthlyAverageHour, yearlyAverageHour, totalAverageHour := 0.0, 0.0, 0.0, 0.0
-
 	if workingDaysInWeek > 0 {
 		weeklyAverageHour = math.Round((weeklyWorkingHour/float64(workingDaysInWeek))*100) / 100
 	}
@@ -566,7 +566,27 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 		totalAverageHour = math.Round((totalWorkingHour/float64(len(totalMap)))*100) / 100
 	}
 
-	// 8. 🚀 ส่งคืนผลลัพธ์
+	// 🌟 3. ท่าไม้ตาย! ฟังก์ชันจับเรียง JSON ให้ลำดับเป๊ะๆ
+	orderedJSON := func(keys []string, m map[string]float64) json.RawMessage {
+		str := "{"
+		for i, k := range keys {
+			if i > 0 {
+				str += ","
+			}
+			str += fmt.Sprintf(`"%s":%v`, k, m[k])
+		}
+		str += "}"
+		return json.RawMessage(str)
+	}
+
+	// เรียงลำดับปีของ total (เช่น 66, 67, 68) ให้จากน้อยไปมาก
+	totalKeys := []string{}
+	for k := range totalMap {
+		totalKeys = append(totalKeys, k)
+	}
+	sort.Strings(totalKeys)
+
+	// 🌟 4. ประกอบร่าง JSON คืนค่า
 	return map[string]interface{}{
 		"total-working-hour":   math.Round(totalWorkingHour*100) / 100,
 		"total-average-hour":   totalAverageHour,
@@ -576,10 +596,10 @@ func (r *PersonnelRepo) GetWorkingHoursStatistic(managerID, personnelID string) 
 		"monthly-average-hour": monthlyAverageHour,
 		"yearly-working-hour":  math.Round(yearlyWorkingHour*100) / 100,
 		"yearly-average-hour":  yearlyAverageHour,
-		"total":                totalMap,
-		"week":                 weekMap,
-		"month":                monthMap,
-		"year":                 yearMap,
+		"total":                orderedJSON(totalKeys, totalMap), // 👈 ใช้ท่าไม้ตายตรงนี้
+		"week":                 orderedJSON(weekKeys, weekMap),   // 👈 ใช้ท่าไม้ตายตรงนี้
+		"month":                orderedJSON(monthKeys, monthMap), // 👈 ใช้ท่าไม้ตายตรงนี้
+		"year":                 orderedJSON(yearKeys, yearMap),   // 👈 ใช้ท่าไม้ตายตรงนี้
 	}, nil
 }
 
