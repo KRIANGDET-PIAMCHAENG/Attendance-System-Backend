@@ -232,6 +232,11 @@ func (h *PersonnelHandler) GetStatistic(c *gin.Context) {
 		return
 	}
 
+	// 🌟 [แก้ตรงนี้] แอบตัดเอาแค่ 4 ตัวแรกมาใช้ (เอาแค่ปี 2026)
+	if len(yearStr) >= 4 {
+		yearStr = yearStr[:4] 
+	}
+
 	year, err := strconv.Atoi(yearStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ year ไม่ถูกต้อง (ต้องเป็น ค.ศ.)"})
