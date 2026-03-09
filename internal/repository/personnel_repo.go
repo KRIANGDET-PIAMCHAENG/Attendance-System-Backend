@@ -381,6 +381,14 @@ type YearStat struct {
 	Dec float64 `json:"ธ.ค."`
 }
 
+// 🌟 [NEW] เพิ่มฟังก์ชันนี้ต่อท้าย Struct YearStat ทันที
+// เพื่อบังคับให้ Go พ่น JSON ออกมาเป็นภาษาไทยและเรียงลำดับเป๊ะๆ (ทะลวงบั๊กสระอี/สระอิ)
+func (y YearStat) MarshalJSON() ([]byte, error) {
+	str := fmt.Sprintf(`{"ม.ค.":%v,"ก.พ.":%v,"มี.ค.":%v,"เม.ย.":%v,"พ.ค.":%v,"มิ.ย.":%v,"ก.ค.":%v,"ส.ค.":%v,"ก.ย.":%v,"ต.ค.":%v,"พ.ย.":%v,"ธ.ค.":%v}`,
+		y.Jan, y.Feb, y.Mar, y.Apr, y.May, y.Jun, y.Jul, y.Aug, y.Sep, y.Oct, y.Nov, y.Dec)
+	return []byte(str), nil
+}
+
 // 9. Get Working Hours Statistic (ของลูกน้อง)
 func (r *PersonnelRepo) GetManagerWorkingHoursStatistic(managerID, personnelID string) (map[string]interface{}, error) {
 	if !r.checkPermission(managerID, personnelID) {
