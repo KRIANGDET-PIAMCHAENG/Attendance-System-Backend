@@ -57,6 +57,10 @@ func main() {
 
 	statHdl := handler.NewStatHandler(personnelRepo)
 
+	// ประกาศ Notification
+    notificationRepo := repository.NewNotificationRepo(db)
+    notificationHdl := handler.NewNotificationHandler(notificationRepo)
+
 	// ==========================================
 	// 🌟 [NEW] Setup Cron Job (ทำงานหลังบ้าน)
 	// ==========================================
@@ -168,6 +172,16 @@ func main() {
 			attendance_req.DELETE("/delete", attendanceReqHdl.DeleteAttendanceRequest)
 			attendance_req.PUT("/resend", attendanceReqHdl.ResendAttendanceRequest)
 		}
+
+		notifGroup := api.Group("/notifications")
+        {
+            notifGroup.GET("", notificationHdl.GetNotifications)
+            notifGroup.PATCH("/:id/read", notificationHdl.MarkAsRead)
+            notifGroup.PATCH("/read-all", notificationHdl.MarkAllAsRead)
+            notifGroup.GET("/unread-count", notificationHdl.GetUnreadCount)
+            notifGroup.POST("/send-request", notificationHdl.SendRequestNotification)
+            notifGroup.POST("/send-response", notificationHdl.SendResponseNotification)
+        }
 
 	}
 
