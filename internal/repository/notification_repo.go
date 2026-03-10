@@ -80,10 +80,25 @@ func (r *NotificationRepo) GetUnreadCount(userID string) (int64, error) {
 	err := r.db.Table("notifications").Where("user_id = ? AND is_read = false", userID).Count(&count).Error
 	return count, err
 }
+// ==========================================
+// 🌟 ฟังก์ชันเสริม: แปลงวันที่เป็น Format ภาษาไทย
+// ==========================================
+func formatThaiDateRange(start, end time.Time) string {
+	thaiMonths := []string{"ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."}
+	
+	startStr := fmt.Sprintf("%d %s %d", start.Day(), thaiMonths[start.Month()-1], start.Year()+543)
+	endStr := fmt.Sprintf("%d %s %d", end.Day(), thaiMonths[end.Month()-1], end.Year()+543)
 
+	if startStr == endStr {
+		return fmt.Sprintf("วันที่ %s", startStr)
+	}
+	return fmt.Sprintf("วันที่ %s ถึงวันที่ %s", startStr, endStr)
+}
+
+// ==========================================
 // 5. POST /api/notifications/send-request (ส่งหา หัวหน้า)
+// ==========================================
 func (r *NotificationRepo) CreateRequestNotification(reqType, requestNumber string) error {
-	// ตัดตัวอักษรเพื่อหา ID ของคำขอ (เช่น LEV0000000065012 -> 65012)
 	prefix := "LEV"
 	tableName := "leave_requests"
 	if strings.HasPrefix(requestNumber, "REQ") {
@@ -94,41 +109,77 @@ func (r *NotificationRepo) CreateRequestNotification(reqType, requestNumber stri
 	idStr := strings.TrimLeft(strings.TrimPrefix(requestNumber, prefix), "0")
 	reqID, _ := strconv.Atoi(idStr)
 
-	// หาว่าใครเป็นคนส่งคำขอ
-	var ownerID string
-	r.db.Table(tableName).Where("id = ?", reqID).Select("user_id").Scan(&ownerID)
-	if ownerID == "" {
+	// ดึงข้อมูลคำขอ + ชื่อคนส่ง
+	var req struct {
+		UserID       string    `gorm:"column:user_id"`
+		DateFrom     time.Time `gorm:"column:date_from"`
+		DateTo       time.Time `gorm:"column:date_to"`
+		LeaveType    string    `gorm:"column:leave_type"`
+		RequesterName string   `gorm:"column:fullname_thai"`
+	}
+
+	query := r.db.Table(tableName+" req").
+		Select("req.user_id, req.date_from, req.date_to, ui.fullname_thai").
+		Joins("JOIN user_info ui ON req.user_id = ui.user_id").
+		Where("req.id = ?", reqID)
+
+	if prefix == "LEV" {
+		query.Select("req.user_id, req.date_from, req.date_to, req.leave_type, ui.fullname_thai")
+	}
+	
+	if err := query.Scan(&req).Error; err != nil || req.UserID == "" {
 		return errors.New("request not found")
 	}
 
-	// หาหัวหน้าของคนส่งคำขอ (ดึงมาจากตาราง subordinate_manager_roles)
+	// สร้าง Title และ Message ตาม Format
+	var title, message string
+	dateStr := formatThaiDateRange(req.DateFrom, req.DateTo)
+
+	if reqType == "APPROVER_LEAVE" {
+		title = "การอนุมัติคำขอลางาน"
+		
+		leaveName := "ลางาน"
+		r.db.Table("leave_types").Where("name_en = ?", req.LeaveType).Select("name_th").Scan(&leaveName)
+		
+		message = fmt.Sprintf("คำขอ%s%s โดย %s", leaveName, dateStr, req.RequesterName)
+	} else {
+		title = "การอนุมัติเวลาเข้า-ออกงาน"
+		message = fmt.Sprintf("คำขออนุมัติเวลาเข้า-ออกงาน%s โดย %s", dateStr, req.RequesterName)
+	}
+
+	// หาหัวหน้า (role_type = 'main')
 	var managerIDs []string
 	r.db.Table("subordinate_manager_roles smr").
 		Select("DISTINCT ur.user_id").
 		Joins("JOIN user_roles ur ON smr.manager_role_id = ur.role_id").
-		Joins("JOIN role r ON ur.role_id = r.role_id"). // 🌟 JOIN ตาราง role เพื่อเอามาเช็คประเภท
-		Where("smr.subordinate_id = ? AND r.role_type = ?", ownerID, "main"). // 🌟 บังคับว่าต้องเป็น 'main' เท่านั้น
+		Joins("JOIN role r ON ur.role_id = r.role_id").
+		Where("smr.subordinate_id = ? AND r.role_type = ?", req.UserID, "main").
 		Pluck("user_id", &managerIDs)
-	// สร้างแจ้งเตือนส่งให้หัวหน้าทุกคนที่มีสิทธิ์อนุมัติ
+
+	// 🌟 [แก้ Error ตรงนี้] รับค่า Error มาเช็ค ถ้าพังให้ return ออกเลย
 	for _, managerID := range managerIDs {
 		notif := Notification{
 			ID:            "notif_" + uuid.New().String()[:8],
 			UserID:        managerID,
-			Title:         "มีคำขอใหม่รอการอนุมัติ",
-			Message:       fmt.Sprintf("มีคำขอ %s เลขที่ %s รอการตรวจสอบจากคุณ", reqType, requestNumber),
+			Title:         title,
+			Message:       message,
 			IsRead:        false,
 			Type:          reqType,
 			Status:        "PENDING",
 			RequestNumber: requestNumber,
 			CreatedAt:     time.Now(),
 		}
-		r.db.Table("notifications").Create(&notif)
+		if err := r.db.Table("notifications").Create(&notif).Error; err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
+// ==========================================
 // 6. POST /api/notifications/send-response (ส่งหา พนักงาน)
-func (r *NotificationRepo) CreateResponseNotification(reqType, requestNumber, status string) error {
+// ==========================================
+func (r *NotificationRepo) CreateResponseNotification(managerID, reqType, requestNumber, status string) error {
 	prefix := "LEV"
 	tableName := "leave_requests"
 	if strings.HasPrefix(requestNumber, "REQ") {
@@ -139,23 +190,56 @@ func (r *NotificationRepo) CreateResponseNotification(reqType, requestNumber, st
 	idStr := strings.TrimLeft(strings.TrimPrefix(requestNumber, prefix), "0")
 	reqID, _ := strconv.Atoi(idStr)
 
-	// หาว่าใครเป็นเจ้าของคำขอ
-	var ownerID string
-	r.db.Table(tableName).Where("id = ?", reqID).Select("user_id").Scan(&ownerID)
-	if ownerID == "" {
+	// ดึงข้อมูลคำขอ
+	var req struct {
+		UserID    string    `gorm:"column:user_id"`
+		DateFrom  time.Time `gorm:"column:date_from"`
+		DateTo    time.Time `gorm:"column:date_to"`
+		LeaveType string    `gorm:"column:leave_type"`
+	}
+	
+	query := r.db.Table(tableName).Select("user_id, date_from, date_to").Where("id = ?", reqID)
+	if prefix == "LEV" {
+		query.Select("user_id, date_from, date_to, leave_type")
+	}
+	if err := query.Scan(&req).Error; err != nil || req.UserID == "" {
 		return errors.New("request not found")
 	}
 
-	statusTh := "ได้รับการอนุมัติ"
+	// ดึงชื่อบอสที่กดอนุมัติ
+	var managerName string
+	r.db.Table("user_info").Where("user_id = ?", managerID).Select("fullname_thai").Scan(&managerName)
+	if managerName == "" {
+		managerName = "ผู้บังคับบัญชา"
+	}
+
+	// สร้าง Title และ Message ตาม Format
+	dateStr := formatThaiDateRange(req.DateFrom, req.DateTo)
+	statusTh := "ถูกอนุมัติ"
 	if status == "REJECTED" {
 		statusTh = "ถูกปฏิเสธ"
+	} else if status == "CANCELED" {
+		statusTh = "ถูกยกเลิก"
+	}
+
+	var title, message string
+	if reqType == "LEAVE_REQUEST" {
+		title = fmt.Sprintf("คำขอลางาน%s", statusTh)
+		
+		leaveName := "ลางาน"
+		r.db.Table("leave_types").Where("name_en = ?", req.LeaveType).Select("name_th").Scan(&leaveName)
+		
+		message = fmt.Sprintf("คำขอ%s%s %sโดย %s", leaveName, dateStr, statusTh, managerName)
+	} else {
+		title = fmt.Sprintf("คำขอเวลาเข้า-ออกงาน%s", statusTh)
+		message = fmt.Sprintf("คำขออนุมัติเวลาเข้า-ออกงาน%s %sโดย %s", dateStr, statusTh, managerName)
 	}
 
 	notif := Notification{
 		ID:            "notif_" + uuid.New().String()[:8],
-		UserID:        ownerID, // ส่งกลับไปหาพนักงาน
-		Title:         fmt.Sprintf("คำขอ%s", statusTh),
-		Message:       fmt.Sprintf("คำขอเลขที่ %s %s เรียบร้อยแล้ว", requestNumber, statusTh),
+		UserID:        req.UserID, 
+		Title:         title,
+		Message:       message,
 		IsRead:        false,
 		Type:          reqType,
 		Status:        status,
@@ -163,6 +247,5 @@ func (r *NotificationRepo) CreateResponseNotification(reqType, requestNumber, st
 		CreatedAt:     time.Now(),
 	}
 
-	// 🌟 เติม .Error ต่อท้ายเข้าไปครับ
 	return r.db.Table("notifications").Create(&notif).Error
 }

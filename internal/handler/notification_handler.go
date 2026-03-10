@@ -82,6 +82,9 @@ func (h *NotificationHandler) SendRequestNotification(c *gin.Context) {
 
 // 6. POST /api/notifications/send-response
 func (h *NotificationHandler) SendResponseNotification(c *gin.Context) {
+	// 🌟 ดึง ID ของบอสที่กำลังกดอนุมัติ
+	managerID := c.GetString("user_id") 
+
 	var body struct {
 		Type          string `json:"type"`
 		RequestNumber string `json:"requestNumber"`
@@ -92,7 +95,8 @@ func (h *NotificationHandler) SendResponseNotification(c *gin.Context) {
 		return
 	}
 
-	if err := h.repo.CreateResponseNotification(body.Type, body.RequestNumber, body.Status); err != nil {
+	// 🌟 โยน managerID เข้าไปใน Repo ด้วย
+	if err := h.repo.CreateResponseNotification(managerID, body.Type, body.RequestNumber, body.Status); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
