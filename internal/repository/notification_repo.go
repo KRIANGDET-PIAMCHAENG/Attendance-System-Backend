@@ -104,11 +104,11 @@ func (r *NotificationRepo) CreateRequestNotification(reqType, requestNumber stri
 	// หาหัวหน้าของคนส่งคำขอ (ดึงมาจากตาราง subordinate_manager_roles)
 	var managerIDs []string
 	r.db.Table("subordinate_manager_roles smr").
-		Select("ur.user_id").
+		Select("DISTINCT ur.user_id").
 		Joins("JOIN user_roles ur ON smr.manager_role_id = ur.role_id").
-		Where("smr.subordinate_id = ?", ownerID).
+		Joins("JOIN role r ON ur.role_id = r.role_id"). // 🌟 JOIN ตาราง role เพื่อเอามาเช็คประเภท
+		Where("smr.subordinate_id = ? AND r.role_type = ?", ownerID, "main"). // 🌟 บังคับว่าต้องเป็น 'main' เท่านั้น
 		Pluck("user_id", &managerIDs)
-
 	// สร้างแจ้งเตือนส่งให้หัวหน้าทุกคนที่มีสิทธิ์อนุมัติ
 	for _, managerID := range managerIDs {
 		notif := Notification{
