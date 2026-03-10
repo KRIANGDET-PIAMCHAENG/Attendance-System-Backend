@@ -141,10 +141,17 @@ func (r *NotificationRepo) CreateRequestNotification(reqType, requestNumber stri
 		leaveName := "ลางาน"
 		r.db.Table("leave_types").Where("name_en = ?", req.LeaveType).Select("name_th").Scan(&leaveName)
 		
-		message = fmt.Sprintf("คำขอ%s%s โดย %s", leaveName, dateStr, req.RequesterName)
+		// 🌟 [NEW] เช็คว่าถ้าไม่มีคำว่า "ลา" นำหน้า ให้เติมเข้าไป (พักผ่อน -> ลาพักผ่อน)
+		if !strings.HasPrefix(leaveName, "ลา") {
+			leaveName = "ลา" + leaveName
+		}
+		
+		// 🌟 [NEW] เพิ่มคำว่า "กำลังรอการตรวจสอบจากคุณ"
+		message = fmt.Sprintf("คำขอ%s%s โดย %s กำลังรอการตรวจสอบจากคุณ", leaveName, dateStr, req.RequesterName)
 	} else {
 		title = "การอนุมัติเวลาเข้า-ออกงาน"
-		message = fmt.Sprintf("คำขออนุมัติเวลาเข้า-ออกงาน%s โดย %s", dateStr, req.RequesterName)
+		// 🌟 [NEW] เพิ่มคำว่า "กำลังรอการตรวจสอบจากคุณ"
+		message = fmt.Sprintf("คำขออนุมัติเวลาเข้า-ออกงาน%s โดย %s กำลังรอการตรวจสอบจากคุณ", dateStr, req.RequesterName)
 	}
 
 	// หาหัวหน้า (role_type = 'main')
@@ -156,7 +163,6 @@ func (r *NotificationRepo) CreateRequestNotification(reqType, requestNumber stri
 		Where("smr.subordinate_id = ? AND r.role_type = ?", req.UserID, "main").
 		Pluck("user_id", &managerIDs)
 
-	// 🌟 [แก้ Error ตรงนี้] รับค่า Error มาเช็ค ถ้าพังให้ return ออกเลย
 	for _, managerID := range managerIDs {
 		notif := Notification{
 			ID:            "notif_" + uuid.New().String()[:8],
@@ -228,6 +234,11 @@ func (r *NotificationRepo) CreateResponseNotification(managerID, reqType, reques
 		
 		leaveName := "ลางาน"
 		r.db.Table("leave_types").Where("name_en = ?", req.LeaveType).Select("name_th").Scan(&leaveName)
+		
+		// 🌟 [NEW] เช็คและเติมคำว่า "ลา" ในฝั่งส่งกลับหาพนักงานด้วยเหมือนกัน
+		if !strings.HasPrefix(leaveName, "ลา") {
+			leaveName = "ลา" + leaveName
+		}
 		
 		message = fmt.Sprintf("คำขอ%s%s %sโดย %s", leaveName, dateStr, statusTh, managerName)
 	} else {
