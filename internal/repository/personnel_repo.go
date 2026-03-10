@@ -26,6 +26,11 @@ func NewPersonnelRepo(db *gorm.DB) *PersonnelRepo {
 }
 
 func (r *PersonnelRepo) checkPermission(managerID, targetUserID string) bool {
+
+	if managerID == targetUserID {
+        return true
+    }
+	
 	var adminCount int64
 	r.db.Table("user_roles ur").Joins("JOIN role r ON ur.role_id = r.role_id").
 		Where("ur.user_id = ? AND r.role_type = ?", managerID, "admin").Count(&adminCount)

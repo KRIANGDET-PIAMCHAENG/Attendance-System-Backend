@@ -55,8 +55,7 @@ func main() {
 	personnelRepo := repository.NewPersonnelRepo(db)
 	personnelHdl := handler.NewPersonnelHandler(personnelRepo)
 
-	statRepo := repository.NewStatRepo(db)
-	statHdl := handler.NewStatHandler(statRepo)
+	statHdl := handler.NewStatHandler(personnelRepo)
 
 	// ==========================================
 	// 🌟 [NEW] Setup Cron Job (ทำงานหลังบ้าน)
