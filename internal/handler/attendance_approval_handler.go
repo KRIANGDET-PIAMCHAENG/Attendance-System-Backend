@@ -45,14 +45,25 @@ func (h *AttendanceApprovalHandler) GetFilterRange(c *gin.Context) {
 }
 
 func (h *AttendanceApprovalHandler) GetDetail(c *gin.Context) {
-	managerID := c.GetString("user_id")
-	reqIDStr := c.Query("request-id")
-	reqIDStr = strings.TrimLeft(strings.TrimPrefix(reqIDStr, "REQ"), "0")
-	reqID, _ := strconv.Atoi(reqIDStr)
+    managerID := c.GetString("user_id")
+    reqIDStr := c.Query("request-id")
+    reqIDStr = strings.TrimLeft(strings.TrimPrefix(reqIDStr, "REQ"), "0")
+    reqID, _ := strconv.Atoi(reqIDStr)
 
-	res, err := h.repo.GetRequestDetail(managerID, reqID)
-	if err != nil { c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()}); return }
-	c.JSON(http.StatusOK, gin.H{"data": res})
+    // 🌟 ดึง URL อัตโนมัติ (ได้ผลลัพธ์เช่น http://mc-developcraft.net/ หรือ http://localhost:3000/)
+    scheme := "http"
+    if c.Request.TLS != nil {
+        scheme = "https"
+    }
+    baseURL := scheme + "://" + c.Request.Host + "/"
+
+    // 🌟 ส่ง baseURL ไปให้ Repo
+    res, err := h.repo.GetRequestDetail(managerID, reqID, baseURL)
+    if err != nil { 
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return 
+    }
+    c.JSON(http.StatusOK, gin.H{"data": res})
 }
 
 func (h *AttendanceApprovalHandler) ApproveReject(c *gin.Context) {

@@ -104,8 +104,8 @@ func (r *AttendanceApprovalRepo) GetFilterRange(managerID string) (map[string]in
 		"end":   end.Format("2006-01-02T15:04:05.000Z"),
 	}, nil
 }
-
-func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int) (map[string]interface{}, error) {
+// 🌟 แก้ Repo: รับตัวแปร baseURL เข้ามา
+func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int, baseURL string) (map[string]interface{}, error) {
     var req struct {
         UserID    string    `gorm:"column:user_id"`
         Name      string    `gorm:"column:fullname_thai"`
@@ -126,8 +126,8 @@ func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int) (
     files := []map[string]interface{}{}
     r.db.Table("attendance_request_attachments").Where("attendance_request_id = ?", reqID).
         Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").Find(&files)
-    baseURL := "http://20.194.9.179:3000/"
     
+    // 🌟 เอา Hardcode IP ออก! ใช้ baseURL ที่ส่งมาจาก Handler แทน
     for i := range files {
         if path, ok := files[i]["file-url"].(string); ok && !strings.HasPrefix(path, "http") {
             path = strings.ReplaceAll(path, "\\", "/")
@@ -158,13 +158,11 @@ func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int) (
 
     var approveDateStr interface{} = "" 
     if !app.CreatedAt.IsZero() {
-        // 🌟 เอา .UTC() ออก และตัด Z ทิ้ง
         approveDateStr = app.CreatedAt.Format("2006-01-02T15:04:05")
     }
 
     return map[string]interface{}{
         "request-detail": map[string]interface{}{
-            // 🌟 เอา .UTC() ออก และตัด Z ทิ้ง
             "date-from":      req.DateFrom.Format("2006-01-02T15:04:05"),
             "date-to":        req.DateTo.Format("2006-01-02T15:04:05"),
             "time-start":     req.StartTime,

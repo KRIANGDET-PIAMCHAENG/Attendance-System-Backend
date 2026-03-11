@@ -68,18 +68,26 @@ func (h *LeaveApprovalHandler) GetUserDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": res})
 }
 
+// 🌟 แก้ Handler: ดึง Base URL อัตโนมัติเหมือนกัน
 func (h *LeaveApprovalHandler) GetRequestDetail(c *gin.Context) {
-	managerID := c.GetString("user_id")
-	reqIDStr := c.Query("request-id")
-	reqIDStr = strings.TrimLeft(strings.TrimPrefix(reqIDStr, "LEV"), "0")
-	reqID, _ := strconv.Atoi(reqIDStr)
+    managerID := c.GetString("user_id")
+    reqIDStr := c.Query("request-id")
+    reqIDStr = strings.TrimLeft(strings.TrimPrefix(reqIDStr, "LEV"), "0")
+    reqID, _ := strconv.Atoi(reqIDStr)
 
-	res, err := h.repo.GetRequestDetail(managerID, reqID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": res})
+    scheme := "http"
+    if c.Request.TLS != nil {
+        scheme = "https"
+    }
+    baseURL := scheme + "://" + c.Request.Host + "/"
+
+    // 🌟 ส่ง baseURL ไปด้วย
+    res, err := h.repo.GetRequestDetail(managerID, reqID, baseURL)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+    c.JSON(http.StatusOK, gin.H{"data": res})
 }
 
 func (h *LeaveApprovalHandler) ApproveReject(c *gin.Context) {

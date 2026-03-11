@@ -227,87 +227,91 @@ func (r *LeaveApprovalRepo) GetUserDetail(managerID, targetUserID string) (map[s
 		"user-pending": pendingList,
 	}, nil
 }
-// 5. GET /request_detail
-func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int) (map[string]interface{}, error) {
-	// ใช้ Logic เดียวกับ PersonnelRepo.GetDetail ได้เลยครับ (ขออนุญาตดึงข้อมูลให้ครบตาม JSON)
-	var req struct {
-		UserID          string    `gorm:"column:user_id"`
-		LeaveType       string    `gorm:"column:leave_type"`
-		DateFrom        time.Time `gorm:"column:date_from"`
-		DateTo          time.Time `gorm:"column:date_to"`
-		FromDateMorning bool      `gorm:"column:from_date_morning"`
-		ToDateMorning   bool      `gorm:"column:to_date_morning"`
-		Remark          string    `gorm:"column:remark"`
-		CreatedAt       time.Time `gorm:"column:created_at"`
-		Status          string    `gorm:"column:status"`
-	}
-	if err := r.db.Table("leave_requests").Where("id = ?", reqID).First(&req).Error; err != nil {
-		return nil, errors.New("request not found")
-	}
+// 🌟 แก้ Repo: อัปเกรดเรื่องเวลาและรูปภาพให้เนียนกริ๊บ
+func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseURL string) (map[string]interface{}, error) {
+    var req struct {
+        UserID          string    `gorm:"column:user_id"`
+        LeaveType       string    `gorm:"column:leave_type"`
+        DateFrom        time.Time `gorm:"column:date_from"`
+        DateTo          time.Time `gorm:"column:date_to"`
+        FromDateMorning bool      `gorm:"column:from_date_morning"`
+        ToDateMorning   bool      `gorm:"column:to_date_morning"`
+        Remark          string    `gorm:"column:remark"`
+        CreatedAt       time.Time `gorm:"column:created_at"`
+        Status          string    `gorm:"column:status"`
+    }
+    if err := r.db.Table("leave_requests").Where("id = ?", reqID).First(&req).Error; err != nil {
+        return nil, errors.New("request not found")
+    }
 
-	if !r.checkPermission(managerID, req.UserID) {
-		return nil, errors.New("unauthorized")
-	}
+    if !r.checkPermission(managerID, req.UserID) {
+        return nil, errors.New("unauthorized")
+    }
 
-	files := []map[string]interface{}{}
-	r.db.Table("leave_attachments").Where("leave_request_id = ?", reqID).
-		Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").
-		Find(&files)
+    files := []map[string]interface{}{}
+    r.db.Table("leave_attachments").Where("leave_request_id = ?", reqID).
+        Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").
+        Find(&files)
 
-	baseURL := "http://20.194.9.179:3000/"
-	for i := range files {
-		if path, ok := files[i]["file-url"].(string); ok && !strings.HasPrefix(path, "http") {
-			if path[0] == '/' {
-				path = path[1:]
-			}
-			files[i]["file-url"] = baseURL + path
-		}
-	}
+    // 🌟 เอา Hardcode IP ออก และแก้เรื่อง Backslash (\)
+    for i := range files {
+        if path, ok := files[i]["file-url"].(string); ok && !strings.HasPrefix(path, "http") {
+            path = strings.ReplaceAll(path, "\\", "/") // 🌟 ดักเปลี่ยน \ เป็น /
+            if path[0] == '/' {
+                path = path[1:]
+            }
+            files[i]["file-url"] = baseURL + path
+        }
+    }
 
-	var app struct {
-		ApproverName string    `gorm:"column:approver_name"`
-		ApproveRole  string    `gorm:"column:approve_role"`
-		Reason       string    `gorm:"column:reason"`
-		CreatedAt    time.Time `gorm:"column:created_at"`
-	}
-	r.db.Table("leave_approvals").Where("leave_request_id = ?", reqID).First(&app)
+    var app struct {
+        ApproverName string    `gorm:"column:approver_name"`
+        ApproveRole  string    `gorm:"column:approve_role"`
+        Reason       string    `gorm:"column:reason"`
+        CreatedAt    time.Time `gorm:"column:created_at"`
+    }
+    r.db.Table("leave_approvals").Where("leave_request_id = ?", reqID).First(&app)
 
-	if app.ApproveRole == "" {
-		r.db.Table("subordinate_manager_roles smr").
-			Select("r.role_name").
-			Joins("JOIN role r ON smr.manager_role_id = r.role_id").
-			Where("smr.subordinate_id = ? AND r.role_type = ?", req.UserID, "main").
-			Limit(1).Scan(&app.ApproveRole)
-	}
+    if app.ApproveRole == "" {
+        r.db.Table("subordinate_manager_roles smr").
+            Select("r.role_name").
+            Joins("JOIN role r ON smr.manager_role_id = r.role_id").
+            Where("smr.subordinate_id = ? AND r.role_type = ?", req.UserID, "main").
+            Limit(1).Scan(&app.ApproveRole)
+    }
 
-	finalStatus := req.Status
-	if finalStatus == "pending" && req.DateFrom.Before(time.Now()) {
-		finalStatus = "overdue"
-	}
-	var approveDateStr interface{} = nil
-	if !app.CreatedAt.IsZero() {
-		approveDateStr = app.CreatedAt.Format(time.RFC3339)
-	}
+    finalStatus := req.Status
+    if finalStatus == "pending" && req.DateFrom.Before(time.Now()) {
+        finalStatus = "overdue"
+    }
+    
+    // 🌟 แก้ default จาก nil ให้เป็น "" (เพื่อไม่ให้หน้าบ้านพัง)
+    var approveDateStr interface{} = ""
+    if !app.CreatedAt.IsZero() {
+        // 🌟 แก้เวลาให้ไม่มี Timezone กำกับ
+        approveDateStr = app.CreatedAt.Format("2006-01-02T15:04:05")
+    }
 
-	return map[string]interface{}{
-		"request-detail": map[string]interface{}{
-			"leave-type":        req.LeaveType,
-			"date-from":         req.DateFrom.Format(time.RFC3339),
-			"date-to":           req.DateTo.Format(time.RFC3339),
-			"from-date-morning": req.FromDateMorning,
-			"to-date-morning":   req.ToDateMorning,
-			"remark":            req.Remark,
-			"evidence-files":    files,
-			"request-date":      req.CreatedAt.Format(time.RFC3339),
-		},
-		"approve-detail": map[string]interface{}{
-			"status":       finalStatus,
-			"approve-role": app.ApproveRole,
-			"approver":     app.ApproverName,
-			"reason":       app.Reason,
-			"approve-date": approveDateStr,
-		},
-	}, nil
+    return map[string]interface{}{
+        "request-detail": map[string]interface{}{
+            "leave-type":        req.LeaveType,
+            // 🌟 แก้เวลาให้ไม่มี Timezone กำกับ
+            "date-from":         req.DateFrom.Format("2006-01-02T15:04:05"),
+            "date-to":           req.DateTo.Format("2006-01-02T15:04:05"),
+            "from-date-morning": req.FromDateMorning,
+            "to-date-morning":   req.ToDateMorning,
+            "remark":            req.Remark,
+            "evidence-files":    files,
+            "request-date":      req.CreatedAt.Format("2006-01-02T15:04:05"),
+        },
+        "approve-detail": map[string]interface{}{
+            "status":       finalStatus,
+            "approve-role": app.ApproveRole,
+            "approver":     app.ApproverName,
+            "reason":       app.Reason,
+            "approve-date": approveDateStr,
+        },
+    }, nil
 }
 
 // 6. PUT /api/leave-approval/:id (อนุมัติ/ปฏิเสธ)
