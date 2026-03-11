@@ -732,3 +732,20 @@ func (h *AttendanceReqHandler) CheckHoliday(c *gin.Context) {
 		"holiday_name": holidayName, // ถ้าเป็น nil ฝั่ง Gin จะแปลงเป็น null ให้เลย
 	})
 }
+
+// [NEW] GET /api/attendance/filter_range
+func (h *UserHandler) GetAttendanceFilterRangeHistory(c *gin.Context) {
+	// ดึง userID จาก Token ที่ถูกฝากไว้ใน Middleware
+	userID := c.MustGet("user_id").(string)
+
+	// เรียก Repository
+	res, err := h.repo.GetAttendanceFilterRangeHistory(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch filter range", "details": err.Error()})
+		return
+	}
+
+	// ส่งกลับในรูปแบบที่ Frontend ต้องการเป๊ะๆ 
+	// { "start": "...", "end": "..." }
+	c.JSON(http.StatusOK, res)
+}

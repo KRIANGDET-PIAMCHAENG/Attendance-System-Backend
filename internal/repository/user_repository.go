@@ -757,3 +757,39 @@ func (r *UserRepo) GetSignaturePath(userID string) (*string, error) {
 	return path, err
 }
 
+// [NEW] GET /api/attendance/filter_range
+func (r *UserRepo) GetAttendanceFilterRangeHistory(userID string) (map[string]interface{}, error) {
+	var result struct {
+		MinDate *time.Time `gorm:"column:min_date"`
+		MaxDate *time.Time `gorm:"column:max_date"`
+	}
+
+	// ค้นหาวันที่น้อยที่สุด (เริ่ม) และมากที่สุด (ล่าสุด) จากตาราง attendance
+	err := r.db.Table("attendance").
+		Select("MIN(date) as min_date, MAX(date) as max_date").
+		Where("user_id = ?", userID).
+		Scan(&result).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	// กำหนดค่า Default (เผื่อ User คนนี้ยังไม่เคยสแกนนิ้วเลย)
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, -1)
+
+	// ถ้ามีข้อมูลใน DB ให้เอาค่าจาก DB มาทับ
+	if result.MinDate != nil {
+		start = *result.MinDate
+	}
+	if result.MaxDate != nil {
+		end = *result.MaxDate
+	}
+
+	// คืนค่ารูปแบบ "2025-04-01T00:00:00.000Z" ตาม Mock
+	return map[string]interface{}{
+		"start": start.Format("2006-01-02T15:04:05.000Z"),
+		"end":   end.Format("2006-01-02T15:04:05.000Z"),
+	}, nil
+}
