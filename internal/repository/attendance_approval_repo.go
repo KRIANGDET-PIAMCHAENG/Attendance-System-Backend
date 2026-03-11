@@ -97,7 +97,6 @@ func (r *AttendanceApprovalRepo) GetFilterRange(managerID string) (map[string]in
 		"end":   end.Format("2006-01-02T15:04:05.000Z"),
 	}, nil
 }
-
 func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int) (map[string]interface{}, error) {
 	var req struct {
 		UserID    string    `gorm:"column:user_id"`
@@ -120,8 +119,11 @@ func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int) (
 	r.db.Table("attendance_request_attachments").Where("attendance_request_id = ?", reqID).
 		Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").Find(&files)
 	baseURL := "http://20.194.9.179:3000/"
+	
 	for i := range files {
 		if path, ok := files[i]["file-url"].(string); ok && !strings.HasPrefix(path, "http") {
+			// 🌟 [แก้ตรงนี้] แปลง Backslash (\) เป็น Forward Slash (/)
+			path = strings.ReplaceAll(path, "\\", "/")
 			if path[0] == '/' {
 				path = path[1:]
 			}
@@ -129,16 +131,15 @@ func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int) (
 		}
 	}
 
-	// 🌟 [จุดที่ 1 แก้ไข] เปลี่ยนมาดึง approver_id แทน approver_name
 	var app struct {
 		ApproverID  string    `gorm:"column:approver_id"`
 		ApproveRole string    `gorm:"column:approve_role"`
 		Reason      string    `gorm:"column:reason"`
 		CreatedAt   time.Time `gorm:"column:created_at"`
 	}
-	r.db.Table("attendance_approvals").Where("attendance_request_id = ?", reqID).First(&app)
+	// 🌟 [แก้ตรงนี้] ใช้ Limit(1).Find() แทน First() ป้องกัน Error ถ้ายังไม่มีประวัติการอนุมัติ
+	r.db.Table("attendance_approvals").Where("attendance_request_id = ?", reqID).Limit(1).Find(&app)
 
-	// 🌟 [จุดที่ 2 เพิ่มใหม่] เอา ApproverID ไปค้นหาชื่อจริงภาษาไทย
 	var approverName string
 	if app.ApproverID != "" {
 		r.db.Table("user_info").Where("user_id = ?", app.ApproverID).Select("fullname_thai").Scan(&approverName)
@@ -149,15 +150,17 @@ func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int) (
 			Where("ur.user_id = ? AND r.role_type = 'main'", managerID).Select("r.role_name").Limit(1).Scan(&app.ApproveRole)
 	}
 
-	var approveDateStr interface{} = nil
+	var approveDateStr interface{} = "" // 🌟 ใช้ค่าว่าง (String ว่าง) แทน nil ถ้ายังไม่อนุมัติ
 	if !app.CreatedAt.IsZero() {
-		approveDateStr = app.CreatedAt.Format(time.RFC3339)
+		// 🌟 [แก้ตรงนี้] แปลงเป็น UTC และ .000Z
+		approveDateStr = app.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z")
 	}
 
 	return map[string]interface{}{
 		"request-detail": map[string]interface{}{
-			"date-from":      req.DateFrom.Format(time.RFC3339),
-			"date-to":        req.DateTo.Format(time.RFC3339),
+			"date-from":      req.DateFrom.UTC().Format("2006-01-02T15:04:05.000Z"),
+			// 🌟 [แก้ตรงนี้] แปลงเป็น UTC และ .000Z ให้เหมือน date-from
+			"date-to":        req.DateTo.UTC().Format("2006-01-02T15:04:05.000Z"),
 			"time-start":     req.StartTime,
 			"time-end":       req.EndTime,
 			"remark":         req.Remark,
@@ -166,7 +169,7 @@ func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int) (
 		"approve-detail": map[string]interface{}{
 			"status":       req.Status,
 			"approve-role": app.ApproveRole,
-			"approver":     approverName, // 🌟 [จุดที่ 3 แก้ไข] ส่งชื่อที่หามาได้กลับไปให้ Frontend
+			"approver":     approverName,
 			"reason":       app.Reason,
 			"approve-date": approveDateStr,
 		},

@@ -169,71 +169,72 @@ func getBaseURL(c *gin.Context) string {
 	}
 	return fmt.Sprintf("%s://%s/", scheme, c.Request.Host)
 }
-
 func (h *AttendanceReqHandler) GetAttendanceDetail(c *gin.Context) {
-	userID := c.MustGet("user_id").(string)
-	reqIDStr := c.Query("id")
+    userID := c.MustGet("user_id").(string)
+    reqIDStr := c.Query("id")
 
-	idStr := strings.TrimPrefix(reqIDStr, "REQ")
-	reqID, err := strconv.Atoi(idStr)
-	if err != nil || reqID == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID ไม่ถูกต้อง"})
-		return
-	}
+    idStr := strings.TrimPrefix(reqIDStr, "REQ")
+    reqID, err := strconv.Atoi(idStr)
+    if err != nil || reqID == 0 {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID ไม่ถูกต้อง"})
+        return
+    }
 
-	// 🌟 [แก้ตรงนี้] รับค่า expectedRole เพิ่มเข้ามาจาก Repo
-	request, approverName, expectedRole, err := h.repo.GetAttendanceDetail(userID, reqID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "ดึงข้อมูลไม่สำเร็จ"})
-		return
-	}
+    // รับค่า expectedRole เพิ่มเข้ามาจาก Repo
+    request, approverName, expectedRole, err := h.repo.GetAttendanceDetail(userID, reqID)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "ดึงข้อมูลไม่สำเร็จ"})
+        return
+    }
 
-	baseURL := getBaseURL(c)
-	var evidenceFiles []map[string]interface{}
-	for _, file := range request.Attachments {
-		evidenceFiles = append(evidenceFiles, map[string]interface{}{
-			"file-name": file.OriginalName,
-			"file-size": file.FileSize,
-			"file-type": file.FileType,
-			"file-url":  baseURL + file.FilePath,
-		})
-	}
+    baseURL := getBaseURL(c)
+    var evidenceFiles []map[string]interface{}
+    for _, file := range request.Attachments {
+        // 🌟 แก้ไข Path: เปลี่ยน Backslash (\) เป็น Forward Slash (/) ให้เว็บอ่านได้
+        fixedPath := strings.ReplaceAll(file.FilePath, "\\", "/")
+        
+        evidenceFiles = append(evidenceFiles, map[string]interface{}{
+            "file-name": file.OriginalName,
+            "file-size": file.FileSize,
+            "file-type": file.FileType,
+            "file-url":  baseURL + fixedPath, // 🌟 ใช้ Path ที่แก้แล้ว
+        })
+    }
 
-	if evidenceFiles == nil {
-		evidenceFiles = []map[string]interface{}{}
-	}
+    if evidenceFiles == nil {
+        evidenceFiles = []map[string]interface{}{}
+    }
 
-	// 🌟 จัดโครงสร้างส่วน approve-detail
-	approveDetail := map[string]interface{}{
-		"status":       request.Status, 
-		"approve-role": expectedRole, // 👈 ยัดตำแหน่งหัวหน้าล่วงหน้าใส่ตรงนี้เลย!
-	}
+    // จัดโครงสร้างส่วน approve-detail
+    approveDetail := map[string]interface{}{
+        "status":       request.Status, 
+        "approve-role": expectedRole, 
+    }
 
-	if request.Approval != nil {
-		// ถ้ามีประวัติการอนุมัติแล้ว ให้เติมข้อมูลลงไป
-		approveDetail["approver"] = approverName
-		approveDetail["reason"] = request.Approval.Reason
-		approveDetail["approve-date"] = request.Approval.CreatedAt.Format(time.RFC3339)
-	} else {
-		// ถ้ายังไม่มี (เช่น กำลัง pending) ให้เป็นค่าว่างไปก่อน จะได้ไม่ติดวันที่ 0001-01-01T...
-		approveDetail["approver"] = ""
-		approveDetail["reason"] = ""
-		approveDetail["approve-date"] = ""
-	}
+    if request.Approval != nil {
+        // 🌟 แปลง Date ให้อยู่ในรูปแบบ UTC และมี Z ต่อท้าย
+        approveDetail["approver"] = approverName
+        approveDetail["reason"] = request.Approval.Reason
+        approveDetail["approve-date"] = request.Approval.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z")
+    } else {
+        approveDetail["approver"] = ""
+        approveDetail["reason"] = ""
+        approveDetail["approve-date"] = ""
+    }
 
-	// 🌟 จัดโครงสร้าง JSON ขั้นสุดท้ายให้เหมือน Frontend แบบเป๊ะๆ
-	c.JSON(http.StatusOK, gin.H{
-		"request-detail": map[string]interface{}{
-			"date-from":      request.DateFrom.Format(time.RFC3339),
-			"date-to":        request.DateTo.Format(time.RFC3339),
-			"time-start":     request.StartTime, 
-			"time-end":       request.EndTime,   
-			"remark":         request.Remark,
-			"evidence-files": evidenceFiles,
-			// "request-date":   request.CreatedAt.Format(time.RFC3339),
-		},
-		"approve-detail": approveDetail,
-	})
+    // จัดโครงสร้าง JSON ขั้นสุดท้าย
+    c.JSON(http.StatusOK, gin.H{
+        "request-detail": map[string]interface{}{
+            // 🌟 แปลง Date ให้อยู่ในรูปแบบ UTC และมี Z ต่อท้าย
+            "date-from":      request.DateFrom.UTC().Format("2006-01-02T15:04:05.000Z"),
+            "date-to":        request.DateTo.UTC().Format("2006-01-02T15:04:05.000Z"),
+            "time-start":     request.StartTime, 
+            "time-end":       request.EndTime,   
+            "remark":         request.Remark,
+            "evidence-files": evidenceFiles,
+        },
+        "approve-detail": approveDetail,
+    })
 }
 
 // 6. Delete Request (รับค่าจาก JSON Body: {"id": "REQ..."})
