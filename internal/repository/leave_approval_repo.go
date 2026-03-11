@@ -351,53 +351,99 @@ func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseUR
     }, nil
 }
 
-// 6. PUT /api/leave-approval/:id (อนุมัติ/ปฏิเสธ)
+// CalculateLeaveDays ใช้คำนวณจำนวนวันลาจริง โดยคิดเรื่อง ครึ่งเช้า/ครึ่งบ่าย
+func CalculateLeaveDays(from, to time.Time, fromAM, toAM bool) float64 {
+    // คำนวณวันเบื้องต้น (รวมวันเริ่มและวันจบ)
+    days := float64(to.Sub(from).Hours()/24) + 1
+
+    // ถ้าวันแรกไม่ได้ลาช่วงเช้า (เริ่มลาช่วงบ่าย) หักออก 0.5 วัน
+    if !fromAM {
+        days -= 0.5
+    }
+    // ถ้าวันสุดท้ายลาแค่ช่วงเช้า (กลับมาทำงานช่วงบ่าย) หักออก 0.5 วัน
+    if toAM {
+        days -= 0.5
+    }
+
+    if days < 0 { return 0 }
+    return days
+}
+
 func (r *LeaveApprovalRepo) ApproveRejectRequest(managerID string, reqID int, status, reason, signaturePath string) error {
-	// ดึงข้อมูลคนอนุมัติ
-	var manager struct {
-		Name string `gorm:"column:fullname_thai"`
-	}
-	r.db.Table("user_info").Where("user_id = ?", managerID).Select("fullname_thai").First(&manager)
+    var manager struct {
+        Name string `gorm:"column:fullname_thai"`
+    }
+    r.db.Table("user_info").Where("user_id = ?", managerID).Select("fullname_thai").First(&manager)
 
-	var approveRole string
-	r.db.Table("user_roles ur").Joins("JOIN role r ON ur.role_id = r.role_id").
-		Where("ur.user_id = ? AND r.role_type = 'main'", managerID).
-		Select("r.role_name").Limit(1).Scan(&approveRole)
+    var approveRole string
+    r.db.Table("user_roles ur").Joins("JOIN role r ON ur.role_id = r.role_id").
+        Where("ur.user_id = ? AND r.role_type = 'main'", managerID).
+        Select("r.role_name").Limit(1).Scan(&approveRole)
 
-	// 🌟 บังคับใช้ Transaction เพื่อความชัวร์ 100% ว่า Update สำเร็จทุกตาราง!
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		// 1. อัปเดตตาราง leave_requests
-		if err := tx.Table("leave_requests").Where("id = ?", reqID).Update("status", status).Error; err != nil {
-			return err
-		}
+    return r.db.Transaction(func(tx *gorm.DB) error {
+        // 0. ดึงข้อมูลใบลาเดิมมาดูก่อน (เพื่อเอาไปคำนวณวันและประเภทลา)
+        var oldReq struct {
+            UserID          string    `gorm:"column:user_id"`
+            LeaveType       string    `gorm:"column:leave_type"`
+            DateFrom         time.Time `gorm:"column:date_from"`
+            DateTo           time.Time `gorm:"column:date_to"`
+            FromDateMorning bool      `gorm:"column:from_date_morning"`
+            ToDateMorning   bool      `gorm:"column:to_date_morning"`
+            Status          string    `gorm:"column:status"`
+        }
+        if err := tx.Table("leave_requests").Where("id = ?", reqID).First(&oldReq).Error; err != nil {
+            return err
+        }
 
-		// 2. บันทึกตาราง leave_approvals (ถ้ามีอยู่แล้วให้อัปเดต ถ้ายังไม่มีให้ Insert)
-		var count int64
-		tx.Table("leave_approvals").Where("leave_request_id = ?", reqID).Count(&count)
-		
-	if count > 0 {
-			err := tx.Table("leave_approvals").Where("leave_request_id = ?", reqID).Updates(map[string]interface{}{
-				"approver_name":  manager.Name,
-				"approve_role":   approveRole,
-				"status":         status, // 🌟 เพิ่มสถานะ
-				"reason":         reason,
-				"signature_path": signaturePath,
-				"created_at":     time.Now(),
-			}).Error
-			if err != nil { return err }
-		} else {
-			err := tx.Table("leave_approvals").Create(map[string]interface{}{
-				"leave_request_id": reqID,
-				"approver_name":    manager.Name,
-				"approve_role":     approveRole,
-				"status":           status, // 🌟 เพิ่มสถานะ
-				"reason":           reason,
-				"signature_path":   signaturePath,
-				"created_at":       time.Now(),
-			}).Error
-			if err != nil { return err }
-		}
+        // 🌟 ป้องกันการกดย้ำ: ถ้าอนุมัติไปแล้ว (approved) จะไม่บวกยอด used ซ้ำอีก
+        if oldReq.Status == "approved" && status == "approved" {
+            return errors.New("คำขอนี้ถูกอนุมัติไปเรียบร้อยแล้ว")
+        }
 
-		return nil
-	})
+        // 1. อัปเดตตาราง leave_requests
+        if err := tx.Table("leave_requests").Where("id = ?", reqID).Update("status", status).Error; err != nil {
+            return err
+        }
+
+        // 2. บันทึก/อัปเดตตาราง leave_approvals
+        var count int64
+        tx.Table("leave_approvals").Where("leave_request_id = ?", reqID).Count(&count)
+        approvalData := map[string]interface{}{
+            "leave_request_id": reqID,
+            "approver_name":    manager.Name,
+            "approve_role":     approveRole,
+            "status":           status,
+            "reason":           reason,
+            "signature_path":   signaturePath,
+            "created_at":       time.Now(),
+        }
+        if count > 0 {
+            if err := tx.Table("leave_approvals").Where("leave_request_id = ?", reqID).Updates(approvalData).Error; err != nil { return err }
+        } else {
+            if err := tx.Table("leave_approvals").Create(approvalData).Error; err != nil { return err }
+        }
+
+        // 🌟 3. [Logic หัวใจสำคัญ] ถ้าบสกด "approved" ให้ไปตัดยอดวันลา!
+        if status == "approved" {
+            // ก. หา Type ID
+            var typeID int
+            tx.Table("leave_types").Where("name_en = ?", oldReq.LeaveType).Select("id").Scan(&typeID)
+
+            // ข. คำนวณจำนวนวันที่ลาจริง
+            leaveDays := CalculateLeaveDays(oldReq.DateFrom, oldReq.DateTo, oldReq.FromDateMorning, oldReq.ToDateMorning)
+
+            // ค. หาปีงบประมาณ
+            budgetYear, _ := GetBudgetYear(tx, oldReq.DateFrom)
+
+            // ง. อัปเดตตาราง leave_balances (บวกวันลาสะสมเพิ่มเข้าไป)
+            err := tx.Table("leave_balances").
+                Where("user_id = ? AND leave_type_id = ? AND year = ?", oldReq.UserID, typeID, budgetYear).
+                UpdateColumn("days_used", gorm.Expr("days_used + ?", leaveDays)).Error
+            if err != nil {
+                return errors.New("ไม่พบข้อมูลโควตาลาของพนักงานรายนี้ในปีงบประมาณปัจจุบัน")
+            }
+        }
+
+        return nil
+    })
 }
