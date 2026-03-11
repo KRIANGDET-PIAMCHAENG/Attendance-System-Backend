@@ -169,6 +169,7 @@ func getBaseURL(c *gin.Context) string {
 	}
 	return fmt.Sprintf("%s://%s/", scheme, c.Request.Host)
 }
+
 func (h *AttendanceReqHandler) GetAttendanceDetail(c *gin.Context) {
     userID := c.MustGet("user_id").(string)
     reqIDStr := c.Query("id")
@@ -180,7 +181,6 @@ func (h *AttendanceReqHandler) GetAttendanceDetail(c *gin.Context) {
         return
     }
 
-    // รับค่า expectedRole เพิ่มเข้ามาจาก Repo
     request, approverName, expectedRole, err := h.repo.GetAttendanceDetail(userID, reqID)
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "ดึงข้อมูลไม่สำเร็จ"})
@@ -190,14 +190,13 @@ func (h *AttendanceReqHandler) GetAttendanceDetail(c *gin.Context) {
     baseURL := getBaseURL(c)
     var evidenceFiles []map[string]interface{}
     for _, file := range request.Attachments {
-        // 🌟 แก้ไข Path: เปลี่ยน Backslash (\) เป็น Forward Slash (/) ให้เว็บอ่านได้
         fixedPath := strings.ReplaceAll(file.FilePath, "\\", "/")
         
         evidenceFiles = append(evidenceFiles, map[string]interface{}{
             "file-name": file.OriginalName,
             "file-size": file.FileSize,
             "file-type": file.FileType,
-            "file-url":  baseURL + fixedPath, // 🌟 ใช้ Path ที่แก้แล้ว
+            "file-url":  baseURL + fixedPath,
         })
     }
 
@@ -205,29 +204,27 @@ func (h *AttendanceReqHandler) GetAttendanceDetail(c *gin.Context) {
         evidenceFiles = []map[string]interface{}{}
     }
 
-    // จัดโครงสร้างส่วน approve-detail
     approveDetail := map[string]interface{}{
         "status":       request.Status, 
         "approve-role": expectedRole, 
     }
 
     if request.Approval != nil {
-        // 🌟 แปลง Date ให้อยู่ในรูปแบบ UTC และมี Z ต่อท้าย
         approveDetail["approver"] = approverName
         approveDetail["reason"] = request.Approval.Reason
-        approveDetail["approve-date"] = request.Approval.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z")
+        // 🌟 เอา .UTC() ออก และตัด Z ทิ้ง
+        approveDetail["approve-date"] = request.Approval.CreatedAt.Format("2006-01-02T15:04:05")
     } else {
         approveDetail["approver"] = ""
         approveDetail["reason"] = ""
         approveDetail["approve-date"] = ""
     }
 
-    // จัดโครงสร้าง JSON ขั้นสุดท้าย
     c.JSON(http.StatusOK, gin.H{
         "request-detail": map[string]interface{}{
-            // 🌟 แปลง Date ให้อยู่ในรูปแบบ UTC และมี Z ต่อท้าย
-            "date-from":      request.DateFrom.UTC().Format("2006-01-02T15:04:05.000Z"),
-            "date-to":        request.DateTo.UTC().Format("2006-01-02T15:04:05.000Z"),
+            // 🌟 เอา .UTC() ออก และตัด Z ทิ้ง
+            "date-from":      request.DateFrom.Format("2006-01-02T15:04:05"),
+            "date-to":        request.DateTo.Format("2006-01-02T15:04:05"),
             "time-start":     request.StartTime, 
             "time-end":       request.EndTime,   
             "remark":         request.Remark,
