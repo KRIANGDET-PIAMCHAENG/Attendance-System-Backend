@@ -37,7 +37,6 @@ func (r *LeaveApprovalRepo) checkPermission(managerID, targetUserID string) bool
 		Count(&subCount)
 	return subCount > 0
 }
-
 // 1. GET /pending (แบบ Group ตาม User)
 func (r *LeaveApprovalRepo) GetPendingSummary(managerID string) ([]map[string]interface{}, error) {
 	type Result struct {
@@ -48,13 +47,16 @@ func (r *LeaveApprovalRepo) GetPendingSummary(managerID string) ([]map[string]in
 	}
 	var rows []Result
 
+	now := time.Now() // 🌟 เพิ่มเวลาปัจจุบัน
+
 	// ค้นหาคำขอที่ยัง pending และรวมกลุ่มตาม User
 	r.db.Table("leave_requests lr").
 		Select("lr.user_id, ui.fullname_thai as name, ui.picture as avatar_url, COUNT(lr.id) as request_count").
 		Joins("JOIN user_info ui ON lr.user_id = ui.user_id").
 		Joins("JOIN subordinate_manager_roles smr ON lr.user_id = smr.subordinate_id").
 		Joins("JOIN user_roles ur ON smr.manager_role_id = ur.role_id").
-		Where("ur.user_id = ? AND lr.status = 'pending'", managerID).
+		// 🌟 [จุดสำคัญ] เพิ่ม AND lr.date_from >= ? เพื่อไม่นับใบลาที่ Overdue
+		Where("ur.user_id = ? AND lr.status = 'pending' AND lr.date_from >= ?", managerID, now).
 		Group("lr.user_id, ui.fullname_thai, ui.picture").
 		Scan(&rows)
 
