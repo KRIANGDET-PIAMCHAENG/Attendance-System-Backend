@@ -87,8 +87,9 @@ func (r *LeaveApprovalRepo) GetRecent(managerID, startDate, endDate string) ([]m
     }
     var rows []Result
 
-    // 🌟 CASE WHEN: เปลี่ยน pending เป็น overdue เฉพาะใบที่เลยเวลา + allow-retroactive เป็น false
-    query := `SELECT DISTINCT lr.id, lr.user_id, ui.fullname_thai as name, lr.leave_type, lr.date_from, 
+    // 🌟 ใช้ DISTINCT ON (lr.id) เพื่อบังคับให้ 1 ID ออกมาแค่ 1 แถวเท่านั้น
+    // และต้องเพิ่ม lr.id เข้าไปใน ORDER BY ตัวแรกสุดตามกฎของ Postgres
+    query := `SELECT DISTINCT ON (lr.id) lr.id, lr.user_id, ui.fullname_thai as name, lr.leave_type, lr.date_from, 
                 CASE 
                     WHEN lr.status = 'pending' 
                          AND lr.date_from < CURRENT_TIMESTAMP 
@@ -116,7 +117,9 @@ func (r *LeaveApprovalRepo) GetRecent(managerID, startDate, endDate string) ([]m
         query += ` AND lr.date_from >= ? AND lr.date_from <= ?`
         args = append(args, startDate, endDate)
     }
-    query += ` ORDER BY lr.id DESC`
+    
+    // 🌟 ต้องเอา lr.id ขึ้นก่อน แล้วค่อยตามด้วย CreatedAt เพื่อเรียงลำดับเวลา
+    query += ` ORDER BY lr.id, lr.created_at DESC`
 
     r.db.Raw(query, args...).Scan(&rows)
 
@@ -128,7 +131,7 @@ func (r *LeaveApprovalRepo) GetRecent(managerID, startDate, endDate string) ([]m
             "status":     row.Status,
             "request-id": fmt.Sprintf("LEV%012d", row.ID),
             "type":       row.LeaveType,
-            "date-start": row.DateFrom.Format("2006-01-02T15:04:05"), // 🌟 แก้ Format ให้ Flutter กินได้เลย
+            "date-start": row.DateFrom.Format("2006-01-02T15:04:05"), 
         })
     }
     if len(results) == 0 { return []map[string]interface{}{}, nil }
