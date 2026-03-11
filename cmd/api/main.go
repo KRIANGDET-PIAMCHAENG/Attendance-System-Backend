@@ -61,6 +61,12 @@ func main() {
     notificationRepo := repository.NewNotificationRepo(db)
     notificationHdl := handler.NewNotificationHandler(notificationRepo)
 
+	leaveAppvRepo := repository.NewLeaveApprovalRepo(db)
+    leaveAppvHdl := handler.NewLeaveApprovalHandler(leaveAppvRepo, notificationRepo)
+
+    attAppvRepo := repository.NewAttendanceApprovalRepo(db)
+    attAppvHdl := handler.NewAttendanceApprovalHandler(attAppvRepo, notificationRepo)
+
 	// ==========================================
 	// 🌟 [NEW] Setup Cron Job (ทำงานหลังบ้าน)
 	// ==========================================
@@ -183,6 +189,26 @@ func main() {
             notifGroup.POST("/send-response", notificationHdl.SendResponseNotification)
         }
 
+		leaveAppv := api.Group("/leave-approval")
+        {
+            leaveAppv.GET("/pending", leaveAppvHdl.GetPendingSummary)
+            leaveAppv.GET("/recent", leaveAppvHdl.GetRecent)
+            leaveAppv.GET("/filter_range", leaveAppvHdl.GetFilterRange)
+            leaveAppv.GET("/user_detail", leaveAppvHdl.GetUserDetail)
+            leaveAppv.GET("/request_detail", leaveAppvHdl.GetRequestDetail)
+            leaveAppv.PUT("/:id", leaveAppvHdl.ApproveReject)
+        }
+
+        // ⏰ ระบบอนุมัติแก้ไขเวลา
+        attAppv := api.Group("/attendance-approval")
+        {
+            attAppv.GET("/pending", attAppvHdl.GetPending)
+            attAppv.GET("/recent", attAppvHdl.GetRecent)
+            attAppv.GET("/filter_range", attAppvHdl.GetFilterRange)
+            attAppv.GET("/detail", attAppvHdl.GetDetail)
+            attAppv.PUT("/:id", attAppvHdl.ApproveReject)
+        }
+
 	}
 
 	system := r.Group("/system")
@@ -283,9 +309,12 @@ func main() {
 			personnel.GET("/attendance/history", personnelHdl.GetAttendanceHistory)
 			personnel.GET("/attendance/filter_range", personnelHdl.GetManagerStatFilterRange) // ใช้ฟังก์ชันร่วมกับ Statistic ได้เลย
 			
-			
+
 
 		}
+
+
+
 	}
 
 	user_api := r.Group("/user")
