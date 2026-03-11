@@ -254,23 +254,33 @@ func (h *LeaveHandler) GetLeaveDetail(c *gin.Context) {
         loc = time.FixedZone("UTC+7", 7*60*60)
     }
 
-    // 🌟 ตรรกะเช็คสถานะ overdue (เหมือนฝั่ง Personnel)
+    // 🌟 ตรรกะเช็คสถานะ overdue (เช็คด้วยว่าอนุญาตให้ลาย้อนหลังไหม) ถูกต้องเป๊ะ!
     finalStatus := detail.Status
-    if finalStatus == "pending" && detail.DateFrom.Before(time.Now()) {
+    if finalStatus == "pending" && detail.DateFrom.Before(time.Now()) && !detail.AllowRetroactive {
         finalStatus = "overdue"
     }
 
-    scheme := "http"
-    if c.Request.TLS != nil {
-        scheme = "https"
+    // 🌟 กันเหนียวเรื่อง URL (พยายามดึงจาก .env ก่อน ถ้าไม่มีค่อยใช้ c.Request.Host)
+    baseURL := os.Getenv("SERVER_URL")
+    if baseURL == "" {
+        scheme := "http"
+        if c.Request.TLS != nil {
+            scheme = "https"
+        }
+        baseURL = fmt.Sprintf("%s://%s/", scheme, c.Request.Host)
     }
-    baseURL := fmt.Sprintf("%s://%s/", scheme, c.Request.Host)
 
     var evidenceFiles []map[string]interface{}
     for _, att := range attachments {
+        // 🌟 แก้ไข Path: เปลี่ยน Backslash (\) เป็น Forward Slash (/) ให้เว็บอ่านได้
+        fixedPath := strings.ReplaceAll(att.FilePath, "\\", "/")
+        if strings.HasPrefix(fixedPath, "/") {
+            fixedPath = fixedPath[1:] // ลบ slash ตัวหน้าสุดออกถ้ามี
+        }
+
         evidenceFiles = append(evidenceFiles, map[string]interface{}{
             "file-name": att.OriginalName,
-            "file-url":  baseURL + att.FilePath,
+            "file-url":  baseURL + fixedPath, // 🌟 ใช้ Path ที่แก้แล้ว
             "file-type": att.FileType,
             "file-size": att.FileSize,
         })
@@ -279,9 +289,6 @@ func (h *LeaveHandler) GetLeaveDetail(c *gin.Context) {
         evidenceFiles = []map[string]interface{}{}
     }
 
-    // 🌟 [แก้ตรงนี้] จัด Format ให้เหมือนเส้น Personnel เป๊ะๆ
-    // ถ้าค่าเป็น nil ให้ส่งกลับเป็น "" หรือ null ตามที่ Personnel ทำ
-    
     var approverName interface{} = ""
     if detail.Approver != nil {
         approverName = *detail.Approver
@@ -302,25 +309,25 @@ func (h *LeaveHandler) GetLeaveDetail(c *gin.Context) {
         "approve-role": approveRole,
         "approver":     approverName,
         "reason":       approveReason,
-        "approve-date": nil, // Default เป็น null
+        "approve-date": nil,
     }
 
-    // ถ้ามีวันที่อนุมัติจริง ค่อยแปลงเป็น String
     if detail.ApproveDate != nil && !detail.ApproveDate.IsZero() {
-        approveDetail["approve-date"] = detail.ApproveDate.In(loc).Format(time.RFC3339)
+        // 🌟 เอา RFC3339 ออก เพื่อไม่ให้ Frontend ตีความ Timezone ผิด
+        approveDetail["approve-date"] = detail.ApproveDate.In(loc).Format("2006-01-02T15:04:05")
     }
 
-    // 7. ส่ง JSON กลับไปให้ Frontend
     response := gin.H{
         "request-detail": map[string]interface{}{
             "leave-type":        detail.LeaveType,
-            "date-from":         detail.DateFrom.In(loc).Format(time.RFC3339),
-            "date-to":           detail.DateTo.In(loc).Format(time.RFC3339),
+            // 🌟 เอา RFC3339 ออกเหมือนกัน ส่งไปเป็นเลขตรงๆ Frontend จับโชว์ได้เลย
+            "date-from":         detail.DateFrom.In(loc).Format("2006-01-02T15:04:05"),
+            "date-to":           detail.DateTo.In(loc).Format("2006-01-02T15:04:05"),
             "from-date-morning": detail.FromDateMorning,
             "to-date-morning":   detail.ToDateMorning,
             "remark":            detail.Remark,
             "evidence-files":    evidenceFiles,
-            "request-date":      detail.CreatedAt.In(loc).Format(time.RFC3339),
+            "request-date":      detail.CreatedAt.In(loc).Format("2006-01-02T15:04:05"),
         },
         "approve-detail": approveDetail,
     }

@@ -114,47 +114,66 @@ func (r *UserRepo) CheckOverlappingLeave(userID string, startDate string, endDat
 
 	return count > 0, nil // ถ้า count > 0 แปลว่ามีการซ้อนทับ
 }
-// 1. Get Pending (ดึงเฉพาะใบลาที่ยัง "ไม่ถึงเวลา")
+// 1. Get Pending (ดึงเฉพาะใบลาที่ยังไม่ถึงเวลา หรือ ใบลาที่อนุญาตให้ลาย้อนหลังได้)
 func (r *UserRepo) GetPendingLeaves(userID string) ([]LeaveStatusRecord, error) {
-	var leaves []LeaveStatusRecord
-	// 🌟 [เพิ่ม AND date_from >= CURRENT_TIMESTAMP] เพื่อเตะใบลาในอดีตออกไป
-	sql := `SELECT id, leave_type, date_from, status 
-            FROM leave_requests 
-            WHERE user_id = $1 AND status = 'pending' AND date_from >= CURRENT_TIMESTAMP
-            ORDER BY date_from DESC`
+    var leaves []LeaveStatusRecord
+    
+    // 🌟 ท่าไม้ตาย CROSS JOIN เพื่ออ่านค่าจาก JSON ใน Postgres โดยตรง
+    // เช็คว่า allow-retroactive เป็น true ใช่ไหม? ถ้าใช่ ก็ให้อยู่ใน pending ต่อไป
+    sql := `SELECT lr.id, lr.leave_type, lr.date_from, lr.status 
+            FROM leave_requests lr
+            CROSS JOIN (SELECT config_value FROM system_configs WHERE config_key = 'leave_config') sc
+            WHERE lr.user_id = $1 
+              AND lr.status = 'pending' 
+              AND (
+                  CAST(sc.config_value->lr.leave_type->>'allow-retroactive' AS BOOLEAN) = true
+                  OR lr.date_from >= CURRENT_TIMESTAMP
+              )
+            ORDER BY lr.date_from DESC`
 
-	err := r.db.Raw(sql, userID).Scan(&leaves).Error
-	return leaves, err
+    err := r.db.Raw(sql, userID).Scan(&leaves).Error
+    return leaves, err
 }
 
-// 2. Get Recent (ดึงประวัติ และใบลาที่ "เลยเวลา")
+// 2. Get Recent (ดึงประวัติ และใบลาที่ "ไม่อนุญาตให้ลาย้อนหลัง" แล้วเลยเวลา)
 func (r *UserRepo) GetRecentLeaves(userID string, startDate string, endDate string) ([]LeaveStatusRecord, error) {
-	var leaves []LeaveStatusRecord
+    var leaves []LeaveStatusRecord
 
-	// 🌟 [ใช้ท่าไม้ตาย CASE WHEN] แปลง pending ที่เลยเวลา ให้กลายเป็น overdue ตั้งแต่ออกมาจาก DB เลย!
-	query := `SELECT id, leave_type, date_from, 
+    // 🌟 ดักเปลี่ยนเป็น overdue เฉพาะใบที่ pending + เลยเวลา + allow-retroactive เป็น false
+    query := `SELECT lr.id, lr.leave_type, lr.date_from, 
                 CASE 
-                    WHEN status = 'pending' AND date_from < CURRENT_TIMESTAMP THEN 'overdue' 
-                    ELSE status 
+                    WHEN lr.status = 'pending' 
+                         AND lr.date_from < CURRENT_TIMESTAMP 
+                         AND CAST(sc.config_value->lr.leave_type->>'allow-retroactive' AS BOOLEAN) = false 
+                    THEN 'overdue' 
+                    ELSE lr.status 
                 END as status
-              FROM leave_requests 
-              WHERE user_id = ? 
-                AND (status != 'pending' OR (status = 'pending' AND date_from < CURRENT_TIMESTAMP))`
+              FROM leave_requests lr
+              CROSS JOIN (SELECT config_value FROM system_configs WHERE config_key = 'leave_config') sc
+              WHERE lr.user_id = ? 
+                AND (
+                    lr.status != 'pending' 
+                    OR (
+                        lr.status = 'pending' 
+                        AND lr.date_from < CURRENT_TIMESTAMP 
+                        AND CAST(sc.config_value->lr.leave_type->>'allow-retroactive' AS BOOLEAN) = false
+                    )
+                )`
 
-	args := []interface{}{userID}
+    args := []interface{}{userID}
 
-	if startDate != "" {
-		query += ` AND date_from >= ?`
-		args = append(args, startDate)
-	}
-	if endDate != "" {
-		query += ` AND date_from <= ?`
-		args = append(args, endDate)
-	}
-	query += ` ORDER BY date_from DESC`
+    if startDate != "" {
+        query += ` AND lr.date_from >= ?`
+        args = append(args, startDate)
+    }
+    if endDate != "" {
+        query += ` AND lr.date_from <= ?`
+        args = append(args, endDate)
+    }
+    query += ` ORDER BY lr.date_from DESC`
 
-	err := r.db.Raw(query, args...).Scan(&leaves).Error
-	return leaves, err
+    err := r.db.Raw(query, args...).Scan(&leaves).Error
+    return leaves, err
 }
 
 // 3. หาช่วงวันที่ ที่เก่าที่สุดและใหม่ที่สุดของใบลายูสเซอร์คนนี้
@@ -189,6 +208,8 @@ type LeaveDetailRecord struct {
 	ApproveRole   *string
 	ApproveReason *string
 	ApproveDate   *time.Time
+
+	AllowRetroactive bool `gorm:"column:allow_retroactive"`
 }
 
 type LeaveAttachmentRecord struct {
@@ -202,24 +223,23 @@ type LeaveAttachmentRecord struct {
 func (r *UserRepo) GetLeaveDetail(userID string, leaveID int) (*LeaveDetailRecord, []LeaveAttachmentRecord, error) {
 	var detail LeaveDetailRecord
 
-	// 1. ดึงข้อมูลใบลาหลัก พร้อมข้อมูลผู้อนุมัติล่าสุด (ถ้ามีคนกดอนุมัติ/ปฏิเสธแล้ว)
 	err := r.db.Table("leave_requests lr").
-		Select(`
+        Select(`
             lr.id, lr.leave_type, lr.date_from, lr.date_to, 
             lr.from_date_morning, lr.to_date_morning, lr.remark, lr.created_at, lr.status,
             la.approver_name as approver, 
             la.approve_role, 
             la.reason as approve_reason, 
-            la.created_at as approve_date
+            la.created_at as approve_date,
+            CAST(sc.config_value->lr.leave_type->>'allow-retroactive' AS BOOLEAN) as allow_retroactive
         `).
-		Joins("LEFT JOIN leave_approvals la ON la.leave_request_id = lr.id").
-		Where("lr.id = ? AND lr.user_id = ?", leaveID, userID).
-		Order("la.created_at DESC"). // ถ้ามีการอนุมัติหลายรอบ เอาล่าสุดมาแสดง
-		First(&detail).Error
+        Joins("CROSS JOIN (SELECT config_value FROM system_configs WHERE config_key = 'leave_config') sc").
+        Joins("LEFT JOIN leave_approvals la ON la.leave_request_id = lr.id").
+        Where("lr.id = ? AND lr.user_id = ?", leaveID, userID).
+        Order("la.created_at DESC").
+        First(&detail).Error
 
-	if err != nil {
-		return nil, nil, err
-	}
+    if err != nil { return nil, nil, err }
 
 	// 🌟 [NEW LOGIC แก้เรื่อง Pointer *string] 
 	// เช็คว่า ApproveRole เป็น nil (คือ NULL ใน DB) หรือถ้าแกะค่ามาแล้วเป็น "" ให้ไปค้นหาตำแหน่งหัวหน้า
