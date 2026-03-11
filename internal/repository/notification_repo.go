@@ -34,21 +34,34 @@ type Notification struct {
 
 // 1. GET /notifications
 func (r *NotificationRepo) GetNotifications(userID string) ([]map[string]interface{}, error) {
-	var notifs []Notification
+	var notifs []Notification // ใช้ Struct Notification ของลูกพี่ได้เลย
 	r.db.Table("notifications").Where("user_id = ?", userID).Order("created_at DESC").Scan(&notifs)
 
 	var results []map[string]interface{}
+	
+	// 🌟 [เพิ่ม] Map สำหรับดักเก็บตัวที่เคยโชว์ไปแล้ว จะได้ไม่ส่งซ้ำ
+	seen := make(map[string]bool) 
+
 	for _, n := range notifs {
-		results = append(results, map[string]interface{}{
-			"id":            n.ID,
-			"title":         n.Title,
-			"message":       n.Message,
-			"isRead":        n.IsRead,
-			"type":          n.Type,
-			"status":        n.Status,
-			"requestNumber": n.RequestNumber,
-			"createdAt":     n.CreatedAt.Format(time.RFC3339),
-		})
+		// 🌟 สร้าง Key เช็คความซ้ำ (เอา เลขคำขอ + สถานะ + หัวข้อ มารวมกัน)
+		// เช่น "REQ000000000001_REJECTED_คำขอเวลาเข้า-ออกงานถูกปฏิเสธ"
+		uniqueKey := fmt.Sprintf("%s_%s_%s", n.RequestNumber, n.Status, n.Title)
+
+		// ถ้ายังไม่เคยเจอ Key นี้ใน Map ให้เอาใส่ results
+		if !seen[uniqueKey] {
+			seen[uniqueKey] = true // จดไว้ว่าเคยเจอแล้วนะ
+			
+			results = append(results, map[string]interface{}{
+				"id":            n.ID,
+				"title":         n.Title,
+				"message":       n.Message,
+				"isRead":        n.IsRead,
+				"type":          n.Type,
+				"status":        n.Status,
+				"requestNumber": n.RequestNumber,
+				"createdAt":     n.CreatedAt.Format(time.RFC3339),
+			})
+		}
 	}
 	
 	if len(results) == 0 {
