@@ -756,3 +756,4 @@ func (r *UserRepo) GetSignaturePath(userID string) (*string, error) {
 	err := r.db.Raw(sql, userID).Scan(&path).Error
 	return path, err
 }
+

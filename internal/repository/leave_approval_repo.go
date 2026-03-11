@@ -95,7 +95,7 @@ func (r *LeaveApprovalRepo) GetRecent(managerID, startDate, endDate string) ([]m
 	if startDate != "" && endDate != "" {
 		query = query.Where("lr.date_from >= ? AND lr.date_from <= ?", startDate, endDate)
 	}
-	query.Order("lr.updated_at DESC").Scan(&rows)
+	query.Order("lr.created_at DESC").Scan(&rows) // 🌟 เปลี่ยนเป็น created_at
 
 	var results []map[string]interface{}
 	for _, row := range rows {
@@ -324,10 +324,11 @@ func (r *LeaveApprovalRepo) ApproveRejectRequest(managerID string, reqID int, st
 		var count int64
 		tx.Table("leave_approvals").Where("leave_request_id = ?", reqID).Count(&count)
 		
-		if count > 0 {
+	if count > 0 {
 			err := tx.Table("leave_approvals").Where("leave_request_id = ?", reqID).Updates(map[string]interface{}{
 				"approver_name":  manager.Name,
 				"approve_role":   approveRole,
+				"status":         status, // 🌟 เพิ่มสถานะ
 				"reason":         reason,
 				"signature_path": signaturePath,
 				"created_at":     time.Now(),
@@ -338,6 +339,7 @@ func (r *LeaveApprovalRepo) ApproveRejectRequest(managerID string, reqID int, st
 				"leave_request_id": reqID,
 				"approver_name":    manager.Name,
 				"approve_role":     approveRole,
+				"status":           status, // 🌟 เพิ่มสถานะ
 				"reason":           reason,
 				"signature_path":   signaturePath,
 				"created_at":       time.Now(),

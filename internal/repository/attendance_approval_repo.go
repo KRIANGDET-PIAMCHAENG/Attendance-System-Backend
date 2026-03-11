@@ -122,18 +122,27 @@ func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int) (
 	baseURL := "http://20.194.9.179:3000/"
 	for i := range files {
 		if path, ok := files[i]["file-url"].(string); ok && !strings.HasPrefix(path, "http") {
-			if path[0] == '/' { path = path[1:] }
+			if path[0] == '/' {
+				path = path[1:]
+			}
 			files[i]["file-url"] = baseURL + path
 		}
 	}
 
+	// 🌟 [จุดที่ 1 แก้ไข] เปลี่ยนมาดึง approver_id แทน approver_name
 	var app struct {
-		ApproverName string    `gorm:"column:approver_name"`
-		ApproveRole  string    `gorm:"column:approve_role"`
-		Reason       string    `gorm:"column:reason"`
-		CreatedAt    time.Time `gorm:"column:created_at"`
+		ApproverID  string    `gorm:"column:approver_id"`
+		ApproveRole string    `gorm:"column:approve_role"`
+		Reason      string    `gorm:"column:reason"`
+		CreatedAt   time.Time `gorm:"column:created_at"`
 	}
 	r.db.Table("attendance_approvals").Where("attendance_request_id = ?", reqID).First(&app)
+
+	// 🌟 [จุดที่ 2 เพิ่มใหม่] เอา ApproverID ไปค้นหาชื่อจริงภาษาไทย
+	var approverName string
+	if app.ApproverID != "" {
+		r.db.Table("user_info").Where("user_id = ?", app.ApproverID).Select("fullname_thai").Scan(&approverName)
+	}
 
 	if app.ApproveRole == "" {
 		r.db.Table("user_roles ur").Joins("JOIN role r ON ur.role_id = r.role_id").
@@ -141,7 +150,9 @@ func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int) (
 	}
 
 	var approveDateStr interface{} = nil
-	if !app.CreatedAt.IsZero() { approveDateStr = app.CreatedAt.Format(time.RFC3339) }
+	if !app.CreatedAt.IsZero() {
+		approveDateStr = app.CreatedAt.Format(time.RFC3339)
+	}
 
 	return map[string]interface{}{
 		"request-detail": map[string]interface{}{
@@ -155,7 +166,7 @@ func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int) (
 		"approve-detail": map[string]interface{}{
 			"status":       req.Status,
 			"approve-role": app.ApproveRole,
-			"approver":     app.ApproverName,
+			"approver":     approverName, // 🌟 [จุดที่ 3 แก้ไข] ส่งชื่อที่หามาได้กลับไปให้ Frontend
 			"reason":       app.Reason,
 			"approve-date": approveDateStr,
 		},
@@ -169,7 +180,9 @@ func (r *AttendanceApprovalRepo) GetRequestDetail(managerID string, reqID int) (
 
 // 🌟 ฟังก์ชันอนุมัติ พร้อมแก้ตาราง Attendance
 func (r *AttendanceApprovalRepo) ApproveRejectRequest(managerID string, reqID int, status, reason, signaturePath string) error {
-	var manager struct{ Name string }
+	var manager struct { 
+        Name string `gorm:"column:fullname_thai"` 
+    }
 	r.db.Table("user_info").Where("user_id = ?", managerID).Select("fullname_thai").First(&manager)
 	var approveRole string
 	r.db.Table("user_roles ur").Joins("JOIN role r ON ur.role_id = r.role_id").
@@ -195,11 +208,22 @@ func (r *AttendanceApprovalRepo) ApproveRejectRequest(managerID string, reqID in
 		tx.Table("attendance_approvals").Where("attendance_request_id = ?", reqID).Count(&count)
 		if count > 0 {
 			tx.Table("attendance_approvals").Where("attendance_request_id = ?", reqID).Updates(map[string]interface{}{
-				"approver_name": manager.Name, "approve_role": approveRole, "reason": reason, "signature_path": signaturePath, "created_at": time.Now(),
+				"approver_id": managerID, // 🌟 เปลี่ยนมาเซฟ ID แทน
+                "approve_role": approveRole, 
+                "status": status, // 🌟 เพิ่มสถานะ
+                "reason": reason, 
+                "signature_path": signaturePath, 
+                "created_at": time.Now(),
 			})
 		} else {
 			tx.Table("attendance_approvals").Create(map[string]interface{}{
-				"attendance_request_id": reqID, "approver_name": manager.Name, "approve_role": approveRole, "reason": reason, "signature_path": signaturePath, "created_at": time.Now(),
+				"attendance_request_id": reqID, 
+                "approver_id": managerID, // 🌟 เปลี่ยนมาเซฟ ID แทน
+                "approve_role": approveRole, 
+                "status": status, // 🌟 เพิ่มสถานะ
+                "reason": reason, 
+                "signature_path": signaturePath, 
+                "created_at": time.Now(),
 			})
 		}
 
