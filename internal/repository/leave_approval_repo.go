@@ -159,85 +159,97 @@ func (r *LeaveApprovalRepo) GetFilterRange(managerID string) (map[string]interfa
 		"start": start.Format("2006-01-02T15:04:05.000Z"),
 		"end":   end.Format("2006-01-02T15:04:05.000Z"),
 	}, nil
+
 }
-// 4. GET /user_detail
+
+// 4. GET /user_detail (เวอร์ชันอัปเกรด Logic และ Format เวลา)
 func (r *LeaveApprovalRepo) GetUserDetail(managerID, targetUserID string) (map[string]interface{}, error) {
-	if !r.checkPermission(managerID, targetUserID) {
-		return nil, errors.New("unauthorized")
-	}
+    if !r.checkPermission(managerID, targetUserID) {
+        return nil, errors.New("unauthorized")
+    }
 
-	// 1. ดึงข้อมูล User
-	var user struct {
-		Name      string `gorm:"column:fullname_thai"`
-		InitRole  string `gorm:"column:role_init"`
-		AvatarURL string `gorm:"column:picture"`
-	}
-	r.db.Table("user_info").Where("user_id = ?", targetUserID).Select("fullname_thai, role_init, picture").First(&user)
+    // 1. ดึงข้อมูล User
+    var user struct {
+        Name      string `gorm:"column:fullname_thai"`
+        InitRole  string `gorm:"column:role_init"`
+        AvatarURL string `gorm:"column:picture"`
+    }
+    r.db.Table("user_info").Where("user_id = ?", targetUserID).Select("fullname_thai, role_init, picture").First(&user)
 
-	// 2. ดึงข้อมูล Quota (อ้างอิงปีปัจจุบัน)
-	currentYear := time.Now().Year()
-	type Balance struct {
-		LeaveType   string  `gorm:"column:name_en"`
-		DaysAllowed float64 `gorm:"column:days_allowed"`
-		DaysUsed    float64 `gorm:"column:days_used"`
-	}
-	var balances []Balance
-	r.db.Table("leave_balances lb").
-		Select("lt.name_en, lb.days_allowed, lb.days_used").
-		Joins("JOIN leave_types lt ON lb.leave_type_id = lt.id").
-		Where("lb.user_id = ? AND (lb.year = ? OR lb.year IS NULL)", targetUserID, currentYear).
-		Scan(&balances)
+    // 2. ดึงข้อมูล Quota (อ้างอิงปีปัจจุบัน)
+    currentYear := time.Now().Year()
+    type Balance struct {
+        LeaveType   string  `gorm:"column:name_en"`
+        DaysAllowed float64 `gorm:"column:days_allowed"`
+        DaysUsed    float64 `gorm:"column:days_used"`
+    }
+    var balances []Balance
+    r.db.Table("leave_balances lb").
+        Select("lt.name_en, lb.days_allowed, lb.days_used").
+        Joins("JOIN leave_types lt ON lb.leave_type_id = lt.id").
+        Where("lb.user_id = ? AND (lb.year = ? OR lb.year IS NULL)", targetUserID, currentYear).
+        Scan(&balances)
 
-	leaveInfo := make(map[string]interface{})
-	allLeaveTypes := []string{"sick", "personal", "vacation", "maternity", "paternity", "parental"}
-	for _, lt := range allLeaveTypes {
-		leaveInfo[lt] = map[string]interface{}{"used_days": 0.0, "quota_days": 0.0} // Default
-	}
-	for _, b := range balances {
-		leaveInfo[b.LeaveType] = map[string]interface{}{
-			"used_days":  b.DaysUsed,
-			"quota_days": b.DaysAllowed,
-		}
-	}
+    leaveInfo := make(map[string]interface{})
+    allLeaveTypes := []string{"sick", "personal", "vacation", "maternity", "paternity", "parental"}
+    for _, lt := range allLeaveTypes {
+        leaveInfo[lt] = map[string]interface{}{"used_days": 0.0, "quota_days": 0.0}
+    }
+    for _, b := range balances {
+        if _, ok := leaveInfo[b.LeaveType]; ok {
+            leaveInfo[b.LeaveType] = map[string]interface{}{
+                "used_days":  b.DaysUsed,
+                "quota_days": b.DaysAllowed,
+            }
+        }
+    }
 
-	// 🌟 3. ดึงรายการ Pending ของ User คนนี้ (ไม่รวม Overdue)
-	type PendingReq struct {
-		ID       int       `gorm:"column:id"`
-		Type     string    `gorm:"column:leave_type"`
-		DateFrom time.Time `gorm:"column:date_from"`
-		DateTo   time.Time `gorm:"column:date_to"`
-	}
-	var pendings []PendingReq
-	now := time.Now()
-	
-	// 🌟 เพิ่มเงื่อนไข AND date_from >= ? เพื่อกรองเอาเฉพาะคำขอที่ยังไม่หมดอายุ
-	r.db.Table("leave_requests").
-		Select("id, leave_type, date_from, date_to").
-		Where("user_id = ? AND status = 'pending' AND date_from >= ?", targetUserID, now).
-		Scan(&pendings)
+    // 🌟 3. ดึงรายการ Pending ของ User คนนี้ (อัปเกรด Logic Retroactive)
+    type PendingReq struct {
+        ID       int       `gorm:"column:id"`
+        Type     string    `gorm:"column:leave_type"`
+        DateFrom time.Time `gorm:"column:date_from"`
+        DateTo   time.Time `gorm:"column:date_to"`
+    }
+    var pendings []PendingReq
+    
+    // 🌟 ใช้ CROSS JOIN เช็ค config ย้อนหลัง เพื่อให้รายการตรงกับหน้าจอหลักของบอส
+    sql := `SELECT lr.id, lr.leave_type, lr.date_from, lr.date_to
+            FROM leave_requests lr
+            CROSS JOIN (SELECT config_value FROM system_configs WHERE config_key = 'leave_config') sc
+            WHERE lr.user_id = $1 
+              AND lr.status = 'pending' 
+              AND (
+                  CAST(sc.config_value->lr.leave_type->>'allow-retroactive' AS BOOLEAN) = true
+                  OR lr.date_from >= CURRENT_TIMESTAMP
+              )
+            ORDER BY lr.date_from DESC`
 
-	var pendingList []map[string]interface{}
-	for _, p := range pendings {
-		pendingList = append(pendingList, map[string]interface{}{
-			"request-id": fmt.Sprintf("LEV%012d", p.ID),
-			"type":       p.Type,
-			"date-from":  p.DateFrom.Format(time.RFC3339),
-			"date-to":    p.DateTo.Format(time.RFC3339),
-		})
-	}
-	if len(pendingList) == 0 {
-		pendingList = []map[string]interface{}{}
-	}
+    r.db.Raw(sql, targetUserID).Scan(&pendings)
 
-	return map[string]interface{}{
-		"user-detail": map[string]interface{}{
-			"name":       user.Name,
-			"init-role":  user.InitRole,
-			"avatar-url": user.AvatarURL,
-		},
-		"leave-info":   leaveInfo,
-		"user-pending": pendingList,
-	}, nil
+    var pendingList []map[string]interface{}
+    for _, p := range pendings {
+        pendingList = append(pendingList, map[string]interface{}{
+            "request-id": fmt.Sprintf("LEV%012d", p.ID),
+            "type":       p.Type,
+            // 🌟 แก้ Format เวลา ตัด +07:00 ออก เพื่อความเนียนกริ๊บ
+            "date-from":  p.DateFrom.Format("2006-01-02T15:04:05"),
+            "date-to":    p.DateTo.Format("2006-01-02T15:04:05"),
+        })
+    }
+    if len(pendingList) == 0 {
+        pendingList = []map[string]interface{}{}
+    }
+
+    return map[string]interface{}{
+        "user-detail": map[string]interface{}{
+            "name":       user.Name,
+            "init-role":  user.InitRole,
+            "avatar-url": user.AvatarURL,
+        },
+        "leave-info":   leaveInfo,
+        "user-pending": pendingList,
+    }, nil
 }
 
 // 🌟 แก้ Repo: อัปเกรดเรื่องเวลา, รูปภาพ และตรรกะลาย้อนหลัง (Retroactive)
