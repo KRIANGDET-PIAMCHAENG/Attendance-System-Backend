@@ -72,7 +72,6 @@ func (r *LeaveApprovalRepo) GetPendingSummary(managerID string) ([]map[string]in
 	}
 	return results, nil
 }
-
 // 2. GET /recent
 func (r *LeaveApprovalRepo) GetRecent(managerID, startDate, endDate string) ([]map[string]interface{}, error) {
 	type Result struct {
@@ -85,24 +84,33 @@ func (r *LeaveApprovalRepo) GetRecent(managerID, startDate, endDate string) ([]m
 	}
 	var rows []Result
 
+	now := time.Now()
+
+	// 🌟 [จุดที่ 1] แก้เงื่อนไข Where: ดึงอันที่ไม่ใช่ pending "หรือ" เป็น pending แต่เลยเวลามาแล้ว (overdue)
 	query := r.db.Table("leave_requests lr").
 		Select("lr.id, lr.user_id, ui.fullname_thai as name, lr.leave_type, lr.date_from, lr.status").
 		Joins("JOIN user_info ui ON lr.user_id = ui.user_id").
 		Joins("JOIN subordinate_manager_roles smr ON lr.user_id = smr.subordinate_id").
 		Joins("JOIN user_roles ur ON smr.manager_role_id = ur.role_id").
-		Where("ur.user_id = ? AND lr.status != 'pending'", managerID)
+		Where("ur.user_id = ? AND (lr.status != 'pending' OR (lr.status = 'pending' AND lr.date_from < ?))", managerID, now)
 
 	if startDate != "" && endDate != "" {
 		query = query.Where("lr.date_from >= ? AND lr.date_from <= ?", startDate, endDate)
 	}
-	query.Order("lr.created_at DESC").Scan(&rows) // 🌟 เปลี่ยนเป็น created_at
+	query.Order("lr.created_at DESC").Scan(&rows)
 
 	var results []map[string]interface{}
 	for _, row := range rows {
+		// 🌟 [จุดที่ 2] เช็คก่อนส่ง JSON: ถ้าเจอ pending (ซึ่งหลุด Where มาแปลว่ามันเลยกำหนดแล้วแน่ๆ) ให้เปลี่ยนเป็น overdue
+		displayStatus := row.Status
+		if displayStatus == "pending" && row.DateFrom.Before(now) {
+			displayStatus = "overdue"
+		}
+
 		results = append(results, map[string]interface{}{
 			"user-id":    row.UserID,
 			"name":       row.Name,
-			"status":     row.Status,
+			"status":     displayStatus, // 🌟 ใช้สถานะที่แปลงแล้ว
 			"request-id": fmt.Sprintf("LEV%012d", row.ID),
 			"type":       row.LeaveType,
 			"date-start": row.DateFrom.Format(time.RFC3339),
@@ -139,7 +147,6 @@ func (r *LeaveApprovalRepo) GetFilterRange(managerID string) (map[string]interfa
 		"end":   end.Format("2006-01-02T15:04:05.000Z"),
 	}, nil
 }
-
 // 4. GET /user_detail
 func (r *LeaveApprovalRepo) GetUserDetail(managerID, targetUserID string) (map[string]interface{}, error) {
 	if !r.checkPermission(managerID, targetUserID) {
@@ -180,7 +187,7 @@ func (r *LeaveApprovalRepo) GetUserDetail(managerID, targetUserID string) (map[s
 		}
 	}
 
-	// 3. ดึงรายการ Pending ของ User คนนี้
+	// 🌟 3. ดึงรายการ Pending ของ User คนนี้ (ไม่รวม Overdue)
 	type PendingReq struct {
 		ID       int       `gorm:"column:id"`
 		Type     string    `gorm:"column:leave_type"`
@@ -188,9 +195,12 @@ func (r *LeaveApprovalRepo) GetUserDetail(managerID, targetUserID string) (map[s
 		DateTo   time.Time `gorm:"column:date_to"`
 	}
 	var pendings []PendingReq
+	now := time.Now()
+	
+	// 🌟 เพิ่มเงื่อนไข AND date_from >= ? เพื่อกรองเอาเฉพาะคำขอที่ยังไม่หมดอายุ
 	r.db.Table("leave_requests").
 		Select("id, leave_type, date_from, date_to").
-		Where("user_id = ? AND status = 'pending'", targetUserID).
+		Where("user_id = ? AND status = 'pending' AND date_from >= ?", targetUserID, now).
 		Scan(&pendings)
 
 	var pendingList []map[string]interface{}
@@ -216,7 +226,6 @@ func (r *LeaveApprovalRepo) GetUserDetail(managerID, targetUserID string) (map[s
 		"user-pending": pendingList,
 	}, nil
 }
-
 // 5. GET /request_detail
 func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int) (map[string]interface{}, error) {
 	// ใช้ Logic เดียวกับ PersonnelRepo.GetDetail ได้เลยครับ (ขออนุญาตดึงข้อมูลให้ครบตาม JSON)

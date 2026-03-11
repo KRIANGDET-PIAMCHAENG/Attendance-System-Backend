@@ -192,11 +192,14 @@ func main() {
 		leaveAppv := api.Group("/leave-approval")
         {
             leaveAppv.GET("/pending", leaveAppvHdl.GetPendingSummary)
-            leaveAppv.GET("/recent", leaveAppvHdl.GetRecent)
+           
             leaveAppv.GET("/filter_range", leaveAppvHdl.GetFilterRange)
             leaveAppv.GET("/user_detail", leaveAppvHdl.GetUserDetail)
+			leaveAppv.PUT("/:id", leaveAppvHdl.ApproveReject)
+			
             leaveAppv.GET("/request_detail", leaveAppvHdl.GetRequestDetail)
-            leaveAppv.PUT("/:id", leaveAppvHdl.ApproveReject)
+			leaveAppv.GET("/recent", leaveAppvHdl.GetRecent)
+            
         }
 
         // ⏰ ระบบอนุมัติแก้ไขเวลา
