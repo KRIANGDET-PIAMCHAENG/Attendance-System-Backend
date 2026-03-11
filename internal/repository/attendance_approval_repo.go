@@ -46,35 +46,42 @@ func (r *AttendanceApprovalRepo) GetPending(managerID string) ([]map[string]inte
 }
 
 func (r *AttendanceApprovalRepo) GetRecent(managerID, start, end string) ([]map[string]interface{}, error) {
-	type Result struct {
-		ID     int    `gorm:"column:id"`
-		Name   string `gorm:"column:fullname_thai"`
-		Status string `gorm:"column:status"`
-	}
-	var rows []Result
+    type Result struct {
+        ID        int       `gorm:"column:id"`
+        Name      string    `gorm:"column:fullname_thai"`
+        Status    string    `gorm:"column:status"`
+        CreatedAt time.Time `gorm:"column:created_at"` // 🌟 รับค่า created_at มากันเหนียว
+    }
+    var rows []Result
 
-	query := r.db.Table("attendance_requests ar").
-		Select("ar.id, ui.fullname_thai, ar.status").
-		Joins("JOIN user_info ui ON ar.user_id = ui.user_id").
-		Joins("JOIN subordinate_manager_roles smr ON ar.user_id = smr.subordinate_id").
-		Joins("JOIN user_roles ur ON smr.manager_role_id = ur.role_id").
-		Where("ur.user_id = ? AND ar.status != 'pending'", managerID)
+    // 🌟 เติม DISTINCT และดึง ar.created_at ออกมาด้วยเพื่อไม่ให้ Postgres งอแงตอน Order By
+    query := r.db.Table("attendance_requests ar").
+        Select("DISTINCT ar.id, ui.fullname_thai, ar.status, ar.created_at").
+        Joins("JOIN user_info ui ON ar.user_id = ui.user_id").
+        Joins("JOIN subordinate_manager_roles smr ON ar.user_id = smr.subordinate_id").
+        Joins("JOIN user_roles ur ON smr.manager_role_id = ur.role_id").
+        Where("ur.user_id = ? AND ar.status != 'pending'", managerID)
 
-	if start != "" && end != "" {
-		query = query.Where("ar.date_from >= ? AND ar.date_from <= ?", start, end)
-	}
-	query.Order("ar.created_at DESC").Scan(&rows)
+    if start != "" && end != "" {
+        query = query.Where("ar.date_from >= ? AND ar.date_from <= ?", start, end)
+    }
+    
+    // เรียงลำดับจากใหม่ไปเก่า
+    query.Order("ar.created_at DESC").Scan(&rows)
 
-	var results []map[string]interface{}
-	for _, row := range rows {
-		results = append(results, map[string]interface{}{
-			"name":         row.Name,
-			"status":       row.Status,
-			"attendanceId": fmt.Sprintf("REQ%012d", row.ID),
-		})
-	}
-	if len(results) == 0 { return []map[string]interface{}{}, nil }
-	return results, nil
+    var results []map[string]interface{}
+    for _, row := range rows {
+        results = append(results, map[string]interface{}{
+            "name":         row.Name,
+            "status":       row.Status,
+            "attendanceId": fmt.Sprintf("REQ%012d", row.ID),
+        })
+    }
+    
+    if len(results) == 0 { 
+        return []map[string]interface{}{}, nil 
+    }
+    return results, nil
 }
 
 func (r *AttendanceApprovalRepo) GetFilterRange(managerID string) (map[string]interface{}, error) {
