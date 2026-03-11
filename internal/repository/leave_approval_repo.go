@@ -47,15 +47,14 @@ func (r *LeaveApprovalRepo) GetPendingSummary(managerID string) ([]map[string]in
 	}
 	var rows []Result
 
-	now := time.Now() // 🌟 เพิ่มเวลาปัจจุบัน
+	now := time.Now()
 
-	// ค้นหาคำขอที่ยัง pending และรวมกลุ่มตาม User
+	// 🌟 เปลี่ยน COUNT(lr.id) เป็น COUNT(DISTINCT lr.id)
 	r.db.Table("leave_requests lr").
-		Select("lr.user_id, ui.fullname_thai as name, ui.picture as avatar_url, COUNT(lr.id) as request_count").
+		Select("lr.user_id, ui.fullname_thai as name, ui.picture as avatar_url, COUNT(DISTINCT lr.id) as request_count").
 		Joins("JOIN user_info ui ON lr.user_id = ui.user_id").
 		Joins("JOIN subordinate_manager_roles smr ON lr.user_id = smr.subordinate_id").
 		Joins("JOIN user_roles ur ON smr.manager_role_id = ur.role_id").
-		// 🌟 [จุดสำคัญ] เพิ่ม AND lr.date_from >= ? เพื่อไม่นับใบลาที่ Overdue
 		Where("ur.user_id = ? AND lr.status = 'pending' AND lr.date_from >= ?", managerID, now).
 		Group("lr.user_id, ui.fullname_thai, ui.picture").
 		Scan(&rows)
