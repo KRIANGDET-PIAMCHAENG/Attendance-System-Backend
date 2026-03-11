@@ -37,90 +37,102 @@ func (r *LeaveApprovalRepo) checkPermission(managerID, targetUserID string) bool
 		Count(&subCount)
 	return subCount > 0
 }
-// 1. GET /pending (แบบ Group ตาม User)
 func (r *LeaveApprovalRepo) GetPendingSummary(managerID string) ([]map[string]interface{}, error) {
-	type Result struct {
-		UserID       string `gorm:"column:user_id"`
-		Name         string `gorm:"column:name"`
-		AvatarURL    string `gorm:"column:avatar_url"`
-		RequestCount int    `gorm:"column:request_count"`
-	}
-	var rows []Result
+    type Result struct {
+        UserID       string `gorm:"column:user_id"`
+        Name         string `gorm:"column:name"`
+        AvatarURL    string `gorm:"column:avatar_url"`
+        RequestCount int    `gorm:"column:request_count"`
+    }
+    var rows []Result
 
-	now := time.Now()
+    // 🌟 CROSS JOIN เพื่ออ่านค่า allow-retroactive จาก JSON ในตาราง config
+    sql := `SELECT lr.user_id, ui.fullname_thai as name, ui.picture as avatar_url, COUNT(DISTINCT lr.id) as request_count
+            FROM leave_requests lr
+            JOIN user_info ui ON lr.user_id = ui.user_id
+            JOIN subordinate_manager_roles smr ON lr.user_id = smr.subordinate_id
+            JOIN user_roles ur ON smr.manager_role_id = ur.role_id
+            CROSS JOIN (SELECT config_value FROM system_configs WHERE config_key = 'leave_config') sc
+            WHERE ur.user_id = ? 
+              AND lr.status = 'pending' 
+              AND (
+                  CAST(sc.config_value->lr.leave_type->>'allow-retroactive' AS BOOLEAN) = true
+                  OR lr.date_from >= CURRENT_TIMESTAMP
+              )
+            GROUP BY lr.user_id, ui.fullname_thai, ui.picture`
 
-	// 🌟 เปลี่ยน COUNT(lr.id) เป็น COUNT(DISTINCT lr.id)
-	r.db.Table("leave_requests lr").
-		Select("lr.user_id, ui.fullname_thai as name, ui.picture as avatar_url, COUNT(DISTINCT lr.id) as request_count").
-		Joins("JOIN user_info ui ON lr.user_id = ui.user_id").
-		Joins("JOIN subordinate_manager_roles smr ON lr.user_id = smr.subordinate_id").
-		Joins("JOIN user_roles ur ON smr.manager_role_id = ur.role_id").
-		Where("ur.user_id = ? AND lr.status = 'pending' AND lr.date_from >= ?", managerID, now).
-		Group("lr.user_id, ui.fullname_thai, ui.picture").
-		Scan(&rows)
+    r.db.Raw(sql, managerID).Scan(&rows)
 
-	var results []map[string]interface{}
-	for _, row := range rows {
-		results = append(results, map[string]interface{}{
-			"user-id":       row.UserID,
-			"name":          row.Name,
-			"request-count": row.RequestCount,
-			"avatar-url":    row.AvatarURL,
-		})
-	}
-	if len(results) == 0 {
-		return []map[string]interface{}{}, nil
-	}
-	return results, nil
+    var results []map[string]interface{}
+    for _, row := range rows {
+        results = append(results, map[string]interface{}{
+            "user-id":       row.UserID,
+            "name":          row.Name,
+            "request-count": row.RequestCount,
+            "avatar-url":    row.AvatarURL,
+        })
+    }
+    if len(results) == 0 { return []map[string]interface{}{}, nil }
+    return results, nil
 }
-// 2. GET /recent
+
 func (r *LeaveApprovalRepo) GetRecent(managerID, startDate, endDate string) ([]map[string]interface{}, error) {
-	type Result struct {
-		ID        int       `gorm:"column:id"`
-		UserID    string    `gorm:"column:user_id"`
-		Name      string    `gorm:"column:name"`
-		LeaveType string    `gorm:"column:leave_type"`
-		DateFrom  time.Time `gorm:"column:date_from"`
-		Status    string    `gorm:"column:status"`
-	}
-	var rows []Result
+    type Result struct {
+        ID        int       `gorm:"column:id"`
+        UserID    string    `gorm:"column:user_id"`
+        Name      string    `gorm:"column:name"`
+        LeaveType string    `gorm:"column:leave_type"`
+        DateFrom  time.Time `gorm:"column:date_from"`
+        Status    string    `gorm:"column:status"`
+    }
+    var rows []Result
 
-	now := time.Now()
+    // 🌟 CASE WHEN: เปลี่ยน pending เป็น overdue เฉพาะใบที่เลยเวลา + allow-retroactive เป็น false
+    query := `SELECT DISTINCT lr.id, lr.user_id, ui.fullname_thai as name, lr.leave_type, lr.date_from, 
+                CASE 
+                    WHEN lr.status = 'pending' 
+                         AND lr.date_from < CURRENT_TIMESTAMP 
+                         AND CAST(sc.config_value->lr.leave_type->>'allow-retroactive' AS BOOLEAN) = false 
+                    THEN 'overdue' 
+                    ELSE lr.status 
+                END as status
+              FROM leave_requests lr
+              JOIN user_info ui ON lr.user_id = ui.user_id
+              JOIN subordinate_manager_roles smr ON lr.user_id = smr.subordinate_id
+              JOIN user_roles ur ON smr.manager_role_id = ur.role_id
+              CROSS JOIN (SELECT config_value FROM system_configs WHERE config_key = 'leave_config') sc
+              WHERE ur.user_id = ? 
+                AND (
+                    lr.status != 'pending' 
+                    OR (
+                        lr.status = 'pending' 
+                        AND lr.date_from < CURRENT_TIMESTAMP 
+                        AND CAST(sc.config_value->lr.leave_type->>'allow-retroactive' AS BOOLEAN) = false
+                    )
+                )`
 
-	// 🌟 [จุดที่ 1] แก้เงื่อนไข Where: ดึงอันที่ไม่ใช่ pending "หรือ" เป็น pending แต่เลยเวลามาแล้ว (overdue)
-	query := r.db.Table("leave_requests lr").
-		Select("lr.id, lr.user_id, ui.fullname_thai as name, lr.leave_type, lr.date_from, lr.status").
-		Joins("JOIN user_info ui ON lr.user_id = ui.user_id").
-		Joins("JOIN subordinate_manager_roles smr ON lr.user_id = smr.subordinate_id").
-		Joins("JOIN user_roles ur ON smr.manager_role_id = ur.role_id").
-		Where("ur.user_id = ? AND (lr.status != 'pending' OR (lr.status = 'pending' AND lr.date_from < ?))", managerID, now)
+    args := []interface{}{managerID}
+    if startDate != "" && endDate != "" {
+        query += ` AND lr.date_from >= ? AND lr.date_from <= ?`
+        args = append(args, startDate, endDate)
+    }
+    query += ` ORDER BY lr.id DESC`
 
-	if startDate != "" && endDate != "" {
-		query = query.Where("lr.date_from >= ? AND lr.date_from <= ?", startDate, endDate)
-	}
-	query.Order("lr.created_at DESC").Scan(&rows)
+    r.db.Raw(query, args...).Scan(&rows)
 
-	var results []map[string]interface{}
-	for _, row := range rows {
-		// 🌟 [จุดที่ 2] เช็คก่อนส่ง JSON: ถ้าเจอ pending (ซึ่งหลุด Where มาแปลว่ามันเลยกำหนดแล้วแน่ๆ) ให้เปลี่ยนเป็น overdue
-		displayStatus := row.Status
-		if displayStatus == "pending" && row.DateFrom.Before(now) {
-			displayStatus = "overdue"
-		}
-
-		results = append(results, map[string]interface{}{
-			"user-id":    row.UserID,
-			"name":       row.Name,
-			"status":     displayStatus, // 🌟 ใช้สถานะที่แปลงแล้ว
-			"request-id": fmt.Sprintf("LEV%012d", row.ID),
-			"type":       row.LeaveType,
-			"date-start": row.DateFrom.Format(time.RFC3339),
-		})
-	}
-	if len(results) == 0 {
-		return []map[string]interface{}{}, nil
-	}
-	return results, nil
+    var results []map[string]interface{}
+    for _, row := range rows {
+        results = append(results, map[string]interface{}{
+            "user-id":    row.UserID,
+            "name":       row.Name,
+            "status":     row.Status,
+            "request-id": fmt.Sprintf("LEV%012d", row.ID),
+            "type":       row.LeaveType,
+            "date-start": row.DateFrom.Format("2006-01-02T15:04:05"), // 🌟 แก้ Format ให้ Flutter กินได้เลย
+        })
+    }
+    if len(results) == 0 { return []map[string]interface{}{}, nil }
+    return results, nil
 }
 
 // 3. GET /filter_range
@@ -227,20 +239,33 @@ func (r *LeaveApprovalRepo) GetUserDetail(managerID, targetUserID string) (map[s
 		"user-pending": pendingList,
 	}, nil
 }
-// 🌟 แก้ Repo: อัปเกรดเรื่องเวลาและรูปภาพให้เนียนกริ๊บ
+
+// 🌟 แก้ Repo: อัปเกรดเรื่องเวลา, รูปภาพ และตรรกะลาย้อนหลัง (Retroactive)
 func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseURL string) (map[string]interface{}, error) {
     var req struct {
-        UserID          string    `gorm:"column:user_id"`
-        LeaveType       string    `gorm:"column:leave_type"`
-        DateFrom        time.Time `gorm:"column:date_from"`
-        DateTo          time.Time `gorm:"column:date_to"`
-        FromDateMorning bool      `gorm:"column:from_date_morning"`
-        ToDateMorning   bool      `gorm:"column:to_date_morning"`
-        Remark          string    `gorm:"column:remark"`
-        CreatedAt       time.Time `gorm:"column:created_at"`
-        Status          string    `gorm:"column:status"`
+        UserID           string    `gorm:"column:user_id"`
+        LeaveType        string    `gorm:"column:leave_type"`
+        DateFrom         time.Time `gorm:"column:date_from"`
+        DateTo           time.Time `gorm:"column:date_to"`
+        FromDateMorning  bool      `gorm:"column:from_date_morning"`
+        ToDateMorning    bool      `gorm:"column:to_date_morning"`
+        Remark           string    `gorm:"column:remark"`
+        CreatedAt        time.Time `gorm:"column:created_at"`
+        Status           string    `gorm:"column:status"`
+        AllowRetroactive bool      `gorm:"column:allow_retroactive"` // 🌟 รับค่า Config มาเช็ค
     }
-    if err := r.db.Table("leave_requests").Where("id = ?", reqID).First(&req).Error; err != nil {
+
+    // 🌟 ดึงข้อมูลใบลาพร้อมอ่านค่า allow-retroactive จาก JSON Config ใน SQL เดียว
+    err := r.db.Table("leave_requests lr").
+        Select(`
+            lr.*, 
+            CAST(sc.config_value->lr.leave_type->>'allow-retroactive' AS BOOLEAN) as allow_retroactive
+        `).
+        Joins("CROSS JOIN (SELECT config_value FROM system_configs WHERE config_key = 'leave_config') sc").
+        Where("lr.id = ?", reqID).
+        First(&req).Error
+
+    if err != nil {
         return nil, errors.New("request not found")
     }
 
@@ -253,10 +278,9 @@ func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseUR
         Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").
         Find(&files)
 
-    // 🌟 เอา Hardcode IP ออก และแก้เรื่อง Backslash (\)
     for i := range files {
         if path, ok := files[i]["file-url"].(string); ok && !strings.HasPrefix(path, "http") {
-            path = strings.ReplaceAll(path, "\\", "/") // 🌟 ดักเปลี่ยน \ เป็น /
+            path = strings.ReplaceAll(path, "\\", "/")
             if path[0] == '/' {
                 path = path[1:]
             }
@@ -280,22 +304,20 @@ func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseUR
             Limit(1).Scan(&app.ApproveRole)
     }
 
+    // 🌟 ตรรกะเช็คสถานะ Overdue ที่ถูกต้อง
     finalStatus := req.Status
-    if finalStatus == "pending" && req.DateFrom.Before(time.Now()) {
+    if finalStatus == "pending" && req.DateFrom.Before(time.Now()) && !req.AllowRetroactive {
         finalStatus = "overdue"
     }
     
-    // 🌟 แก้ default จาก nil ให้เป็น "" (เพื่อไม่ให้หน้าบ้านพัง)
     var approveDateStr interface{} = ""
     if !app.CreatedAt.IsZero() {
-        // 🌟 แก้เวลาให้ไม่มี Timezone กำกับ
         approveDateStr = app.CreatedAt.Format("2006-01-02T15:04:05")
     }
 
     return map[string]interface{}{
         "request-detail": map[string]interface{}{
             "leave-type":        req.LeaveType,
-            // 🌟 แก้เวลาให้ไม่มี Timezone กำกับ
             "date-from":         req.DateFrom.Format("2006-01-02T15:04:05"),
             "date-to":           req.DateTo.Format("2006-01-02T15:04:05"),
             "from-date-morning": req.FromDateMorning,
@@ -305,7 +327,7 @@ func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseUR
             "request-date":      req.CreatedAt.Format("2006-01-02T15:04:05"),
         },
         "approve-detail": map[string]interface{}{
-            "status":       finalStatus,
+            "status":       finalStatus, // 🌟 ส่งสถานะที่คำนวณแล้ว
             "approve-role": app.ApproveRole,
             "approver":     app.ApproverName,
             "reason":       app.Reason,

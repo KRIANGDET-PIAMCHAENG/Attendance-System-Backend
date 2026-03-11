@@ -194,13 +194,16 @@ func main() {
 		leaveAppv := api.Group("/leave-approval")
         {
             leaveAppv.GET("/pending", leaveAppvHdl.GetPendingSummary)
-           
+           	leaveAppv.GET("/recent", leaveAppvHdl.GetRecent)
+			leaveAppv.GET("/request_detail", leaveAppvHdl.GetRequestDetail)
+
+			
             leaveAppv.GET("/filter_range", leaveAppvHdl.GetFilterRange)
             leaveAppv.GET("/user_detail", leaveAppvHdl.GetUserDetail)
 			leaveAppv.PUT("/:id", leaveAppvHdl.ApproveReject)
 
-            leaveAppv.GET("/request_detail", leaveAppvHdl.GetRequestDetail)
-			leaveAppv.GET("/recent", leaveAppvHdl.GetRecent)
+            
+			
             
         }
 
@@ -209,8 +212,8 @@ func main() {
         {
             attAppv.GET("/pending", attAppvHdl.GetPending)
             attAppv.GET("/recent", attAppvHdl.GetRecent)
+			attAppv.GET("/detail", attAppvHdl.GetDetail)
             attAppv.GET("/filter_range", attAppvHdl.GetFilterRange)
-            attAppv.GET("/detail", attAppvHdl.GetDetail)
             attAppv.PUT("/:id", attAppvHdl.ApproveReject)
         }
 
