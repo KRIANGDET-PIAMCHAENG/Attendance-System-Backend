@@ -27,7 +27,7 @@ func (r *AttendanceApprovalRepo) GetPending(managerID string) ([]map[string]inte
 	var rows []Result
 
 	r.db.Table("attendance_requests ar").
-		Select("ar.id, ar.user_id, ui.fullname_thai").
+		Select("DISTINCT ar.id, ar.user_id, ui.fullname_thai").
 		Joins("JOIN user_info ui ON ar.user_id = ui.user_id").
 		Joins("JOIN subordinate_manager_roles smr ON ar.user_id = smr.subordinate_id").
 		Joins("JOIN user_roles ur ON smr.manager_role_id = ur.role_id").
