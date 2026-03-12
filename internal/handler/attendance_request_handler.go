@@ -322,3 +322,4 @@ func (h *AttendanceReqHandler) ResendAttendanceRequest(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "ส่งคำขอใหม่อีกครั้งสำเร็จ"})
 }
+

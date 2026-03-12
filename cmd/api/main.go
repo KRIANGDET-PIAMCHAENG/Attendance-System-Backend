@@ -139,6 +139,8 @@ func main() {
 			attendance.GET("/check_holiday", attendanceReqHdl.CheckHoliday)
 
 			attendance.GET("/filter_range", userHdl.GetAttendanceFilterRangeHistory)
+
+			attendance.GET("/leave",userHdl.GetLeaveCalendar)
 		}
 
 		leave_request := api.Group("/leave_request")
@@ -197,7 +199,7 @@ func main() {
            	leaveAppv.GET("/recent", leaveAppvHdl.GetRecent)
 			leaveAppv.GET("/request_detail", leaveAppvHdl.GetRequestDetail)
 
-			
+
             leaveAppv.GET("/filter_range", leaveAppvHdl.GetFilterRange)
             leaveAppv.GET("/user_detail", leaveAppvHdl.GetUserDetail)
 			leaveAppv.PUT("/:id", leaveAppvHdl.ApproveReject)

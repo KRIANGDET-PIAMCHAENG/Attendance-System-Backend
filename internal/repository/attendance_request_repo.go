@@ -199,3 +199,81 @@ func (r *UserRepo) ResendAttendanceRequest(userID string, reqID int, remark stri
 		return nil
 	})
 }
+
+// สร้าง Struct จำลองให้ตรงกับที่ Flutter ต้องการ (อันนี้ถูกแล้ว ไว้ข้างบนฟังก์ชัน)
+type LeaveCalendarData struct {
+    IsApproved bool   `json:"is_approved"`
+    LeaveType  string `json:"leave_type"` // FULL_DAY, MORNING, AFTERNOON
+    LeaveName  string `json:"leave_name"`
+}
+
+// 🌟 [แก้ตรงนี้] เปลี่ยนจาก (r *AttendanceReqRepo) เป็น (r *UserRepo)
+func (r *UserRepo) GetLeaveCalendarData(userID string, targetYear int) (map[string]LeaveCalendarData, error) {
+    // 1. กำหนดหัว-ท้าย ของปีเป้าหมาย
+    startDate := time.Date(targetYear, 1, 1, 0, 0, 0, 0, time.Local)
+    endDate := time.Date(targetYear, 12, 31, 23, 59, 59, 0, time.Local)
+
+    var requests []struct {
+        LeaveType       string    `gorm:"column:leave_type"`
+        DateFrom        time.Time `gorm:"column:date_from"`
+        DateTo          time.Time `gorm:"column:date_to"`
+        FromDateMorning bool      `gorm:"column:from_date_morning"`
+        ToDateMorning   bool      `gorm:"column:to_date_morning"`
+        Status          string    `gorm:"column:status"`
+    }
+
+    // 2. ดึงใบลาเฉพาะปีนั้นๆ มา (เอาทั้งที่อนุมัติแล้ว และรออนุมัติ)
+    err := r.db.Table("leave_requests").
+        Select("leave_type, date_from, date_to, from_date_morning, to_date_morning, status").
+        Where("user_id = ? AND status IN ('approved', 'pending') AND date_from <= ? AND date_to >= ?", userID, endDate, startDate).
+        Scan(&requests).Error
+
+    if err != nil {
+        return nil, err
+    }
+
+    // 3. สร้าง Map เก็บข้อมูลโดยมี Key เป็น "YYYY-MM-DD"
+    result := make(map[string]LeaveCalendarData)
+
+    for _, req := range requests {
+        isApproved := req.Status == "approved"
+        leaveName := req.LeaveType
+
+        // 🌟 ลูปตั้งแต่วันเริ่มลา จนถึงวันสิ้นสุดลา
+        for d := req.DateFrom; !d.After(req.DateTo); d = d.AddDate(0, 0, 1) {
+            // ข้ามถ้าข้ามปี
+            if d.Year() != targetYear {
+                continue
+            }
+
+            dateStr := d.Format("2006-01-02") // format เป็น Key
+            leaveTypeStr := "FULL_DAY"        // Default ลาเต็มวัน
+
+            isStartDay := d.Format("2006-01-02") == req.DateFrom.Format("2006-01-02")
+            isEndDay := d.Format("2006-01-02") == req.DateTo.Format("2006-01-02")
+
+            // 🎯 Logic แยก ลาเต็มวัน / ครึ่งเช้า / ครึ่งบ่าย
+            if isStartDay && isEndDay {
+                if req.FromDateMorning && req.ToDateMorning {
+                    leaveTypeStr = "MORNING"
+                } else if !req.FromDateMorning && !req.ToDateMorning {
+                    leaveTypeStr = "AFTERNOON"
+                }
+            } else {
+                if isStartDay && !req.FromDateMorning {
+                    leaveTypeStr = "AFTERNOON"
+                } else if isEndDay && req.ToDateMorning {
+                    leaveTypeStr = "MORNING"
+                }
+            }
+
+            result[dateStr] = LeaveCalendarData{
+                IsApproved: isApproved,
+                LeaveType:  leaveTypeStr,
+                LeaveName:  leaveName,
+            }
+        }
+    }
+
+    return result, nil
+}

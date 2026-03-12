@@ -12,6 +12,7 @@ import(
 	"os"
 	"path/filepath"
 	"github.com/google/uuid"
+	"strconv"
 )
 
 type UserHandler struct {
@@ -748,4 +749,31 @@ func (h *UserHandler) GetAttendanceFilterRangeHistory(c *gin.Context) {
 	// ส่งกลับในรูปแบบที่ Frontend ต้องการเป๊ะๆ 
 	// { "start": "...", "end": "..." }
 	c.JSON(http.StatusOK, res)
+}
+
+// GET /api/attendance/leave
+func (h *UserHandler) GetLeaveCalendar(c *gin.Context) {
+    userID := c.GetString("user_id")
+    
+    // 1. รับค่า year จาก Query
+    yearStr := c.Query("year")
+    year, err := strconv.Atoi(yearStr)
+    
+    // 🌟 ถ้าระบุปีไม่ได้ หรือไม่ได้ส่งมา ยึดตาม "เวลาปัจจุบัน" ทันที!
+    if err != nil || year == 0 {
+        year = time.Now().Year()
+    }
+
+    // 2. เรียก Repo ไปดึงข้อมูล
+    res, err := h.repo.GetLeaveCalendarData(userID, year)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+
+    // 3. ส่งกลับไปในรูปแบบ Map ที่มี Key เป็นวันที่
+    c.JSON(http.StatusOK, gin.H{
+        "data": res,
+        "year": year,
+    })
 }
