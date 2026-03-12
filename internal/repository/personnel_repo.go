@@ -859,50 +859,52 @@ func (r *PersonnelRepo) GetPersonnelStatistic(managerID, personnelID string, tar
 		}
 	}
 
-	// 6. 🤒 โหลดข้อมูลการลา (ที่อนุมัติแล้วเท่านั้น)
-	type LeaveReq struct {
-		LeaveType       string    `gorm:"column:name_en"`
-		DateFrom        time.Time `gorm:"column:date_from"`
-		DateTo          time.Time `gorm:"column:date_to"`
-		FromDateMorning bool      `gorm:"column:from_date_morning"`
-		ToDateMorning   bool      `gorm:"column:to_date_morning"`
-	}
-	var leaves []LeaveReq
-	r.db.Table("leave_requests lr").
-		Select("lt.name_en, lr.date_from, lr.date_to, lr.from_date_morning, lr.to_date_morning").
-		Joins("JOIN leave_types lt ON lr.leave_type = lt.name_en").
-		Where("lr.user_id = ? AND lr.status = 'approved' AND lr.date_from <= ? AND lr.date_to >= ?", personnelID, endDate, startDate).
-		Scan(&leaves)
+	// ... (ส่วนที่ 5 จบตรงที่ประกาศตัวแปร workDayMap) ...
 
-	leaveUsedPerType := make(map[string]float64)
-	leaveDaysMap := make(map[string]float64)
+    // --- 🌟 ส่วนที่ 6.5: โหลดข้อมูลการลาเพื่อเอามาหักลบวันขาดงาน (Absent) ---
+    type LeaveReq struct {
+        LeaveType       string    `gorm:"column:name_en"`
+        DateFrom        time.Time `gorm:"column:date_from"`
+        DateTo          time.Time `gorm:"column:date_to"`
+        FromDateMorning bool      `gorm:"column:from_date_morning"`
+        ToDateMorning   bool      `gorm:"column:to_date_morning"`
+    }
+    var leaves []LeaveReq
+    r.db.Table("leave_requests lr").
+        Select("lt.name_en, lr.date_from, lr.date_to, lr.from_date_morning, lr.to_date_morning").
+        Joins("JOIN leave_types lt ON lr.leave_type = lt.name_en").
+        Where("lr.user_id = ? AND lr.status = 'approved' AND lr.date_from <= ? AND lr.date_to >= ?", personnelID, endDate, startDate).
+        Scan(&leaves)
 
-	// ลูประบุว่าวันไหนลาไปบ้าง (คำนวณครึ่งวัน/เต็มวัน)
-	for _, l := range leaves {
-		for d := l.DateFrom; !d.After(l.DateTo); d = d.AddDate(0, 0, 1) {
-			if d.Before(startDate) || d.After(endDate) {
-				continue // ตัดวันที่อยู่นอกปีงบประมาณ
-			}
-			dateStr := d.Format("2006-01-02")
-			if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday || holidayMap[dateStr] {
-				continue // ลาคร่อมวันหยุด ไม่นับวันนั้น
-			}
+    leaveDaysMap := make(map[string]float64) // 🌟 พระเอกที่หายไป กลับมาแล้ว!
 
-			dayVal := 1.0
-			if d.Format("2006-01-02") == l.DateFrom.Format("2006-01-02") && !l.FromDateMorning {
-				dayVal -= 0.5 // เริ่มลาตอนบ่าย หักออกครึ่งวัน
-			}
-			if d.Format("2006-01-02") == l.DateTo.Format("2006-01-02") && l.ToDateMorning {
-				dayVal -= 0.5 // สิ้นสุดลาตอนเช้า หักออกครึ่งวัน
-			}
+    for _, l := range leaves {
+        for d := l.DateFrom; !d.After(l.DateTo); d = d.AddDate(0, 0, 1) {
+            if d.Before(startDate) || d.After(endDate) {
+                continue 
+            }
+            dateStr := d.Format("2006-01-02")
+            if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday || holidayMap[dateStr] {
+                continue 
+            }
 
-			leaveUsedPerType[l.LeaveType] += dayVal
+            dayVal := 1.0
+            if d.Format("2006-01-02") == l.DateFrom.Format("2006-01-02") && !l.FromDateMorning {
+                dayVal -= 0.5 
+            }
+            if d.Format("2006-01-02") == l.DateTo.Format("2006-01-02") && l.ToDateMorning {
+                dayVal -= 0.5 
+            }
 
-			if !d.After(now) {
-				leaveDaysMap[dateStr] += dayVal
-			}
-		}
-	}
+            if !d.After(now) {
+                leaveDaysMap[dateStr] += dayVal // 🌟 เก็บค่าว่าวันนี้ลาไปกี่วัน (1.0 หรือ 0.5)
+            }
+        }
+    }
+
+    // --- (ส่วนที่ 7: โหลดข้อมูลการสแกนเข้างาน ... โค้ดที่เหลือต่อจากนี้เหมือนเดิมเป๊ะๆ) ---
+
+	
 
 	// --- (ส่วนที่ 7: โหลดข้อมูลการสแกนเข้างาน) ---
     type AttRecord struct {
@@ -974,59 +976,61 @@ func (r *PersonnelRepo) GetPersonnelStatistic(managerID, personnelID string, tar
         absentCount++
     }
 
-	// 9. 📊 โหลดโควต้าวันลา
-	type Balance struct {
-		LeaveType   string  `gorm:"column:name_en"`
-		DaysAllowed float64 `gorm:"column:days_allowed"`
-	}
-	var balances []Balance
-	r.db.Table("leave_balances lb").
-		Select("lt.name_en, lb.days_allowed").
-		Joins("JOIN leave_types lt ON lb.leave_type_id = lt.id").
-		// บางปีค่า year อาจเป็น NULL (จาก db เก่า) เลยดักไว้ให้ด้วยครับ
-		Where("lb.user_id = ? AND (lb.year = ? OR lb.year IS NULL)", personnelID, targetYear).
-		Scan(&balances)
+	// --- 🌟 แก้ไขส่วนที่ 9: ดึงโควตา "และ" วันที่ใช้ไปแล้วจาก leave_balances เลย ---
+    type Balance struct {
+        LeaveType   string  `gorm:"column:name_en"`
+        DaysAllowed float64 `gorm:"column:days_allowed"`
+        DaysUsed    float64 `gorm:"column:days_used"` // 🌟 เพิ่มบรรทัดนี้
+    }
+    var balances []Balance
+    r.db.Table("leave_balances lb").
+        Select("lt.name_en, lb.days_allowed, lb.days_used"). // 🌟 Select days_used มาด้วย
+        Joins("JOIN leave_types lt ON lb.leave_type_id = lt.id").
+        Where("lb.user_id = ? AND (lb.year = ? OR lb.year IS NULL)", personnelID, targetYear).
+        Scan(&balances)
 
-	quotaMap := make(map[string]float64)
-	for _, b := range balances {
-		quotaMap[b.LeaveType] = b.DaysAllowed
-	}
+    quotaMap := make(map[string]float64)
+    usedMap := make(map[string]float64) // 🌟 สร้าง Map เก็บยอดที่ใช้
 
-	// 10. 🧩 ประกอบร่าง JSON ข้อมูล Leave ให้ตรงตาม Format
-	allLeaveTypes := []string{"sick", "personal", "vacation", "maternity", "paternity", "parental"}
-	leavesMap := make(map[string]interface{})
-	totalLeaveDays := 0.0
-	totalOverLeave := 0.0
+    for _, b := range balances {
+        quotaMap[b.LeaveType] = b.DaysAllowed
+        usedMap[b.LeaveType] = b.DaysUsed // 🌟 เก็บยอดที่ใช้เข้า Map
+    }
 
-	for _, lt := range allLeaveTypes {
-		used := leaveUsedPerType[lt]
-		quota := quotaMap[lt]
+    // --- 🌟 แก้ไขส่วนที่ 10: ประกอบร่าง JSON ---
+    allLeaveTypes := []string{"sick", "personal", "vacation", "maternity", "paternity", "parental"}
+    leavesMap := make(map[string]interface{})
+    totalLeaveDays := 0.0
+    totalOverLeave := 0.0
 
-		if used > quota {
-			totalOverLeave += (used - quota)
-		}
-		totalLeaveDays += used
+    for _, lt := range allLeaveTypes {
+        used := usedMap[lt]   // 🌟 ดึงยอดที่ใช้จาก Map 
+        quota := quotaMap[lt]
 
-		leavesMap[lt] = map[string]interface{}{
-			"used_days":  used,
-			"quota_days": quota,
-		}
-	}
+        if used > quota {
+            totalOverLeave += (used - quota)
+        }
+        totalLeaveDays += used
 
-	// 11. 🚀 คืนค่ากลับให้ Handler
-	return map[string]interface{}{
-		"total_work_days":  totalWorkDays,
-		// ลบวันลาที่ใช้ไปทั้งหมด ออกจากวันที่ต้องมาทำงาน = "วันที่ต้องทำงานจริง"
-		"actual_work_days": float64(totalWorkDays) - totalLeaveDays, 
-		"attendance_detail": map[string]interface{}{
-			"on_time_days": onTimeCount,
-			"late_days":    lateCount,
-			"absent_days":  absentCount,
-		},
-		"leave_detail": map[string]interface{}{
-			"total_leave_days": totalLeaveDays,
-			"over_leave_days":  totalOverLeave,
-			"leaves":           leavesMap,
-		},
-	}, nil
+        leavesMap[lt] = map[string]interface{}{
+            "used_days":  used,
+            "quota_days": quota,
+        }
+    }
+
+    // 11. 🚀 คืนค่ากลับให้ Handler
+    return map[string]interface{}{
+        "total_work_days":  totalWorkDays,
+        "actual_work_days": float64(totalWorkDays) - totalLeaveDays, 
+        "attendance_detail": map[string]interface{}{
+            "on_time_days": onTimeCount,
+            "late_days":    lateCount,
+            "absent_days":  absentCount, // ⚠️ หมายเหตุ: Logic ขาดงานตรงนี้อาจจะต้องปรับตามถ้าจะนับวันลาด้วย
+        },
+        "leave_detail": map[string]interface{}{
+            "total_leave_days": totalLeaveDays,
+            "over_leave_days":  totalOverLeave,
+            "leaves":           leavesMap,
+        },
+    }, nil
 }
