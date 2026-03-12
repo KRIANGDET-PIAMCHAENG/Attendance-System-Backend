@@ -254,8 +254,7 @@ func (r *LeaveApprovalRepo) GetUserDetail(managerID, targetUserID string) (map[s
         "user-pending": pendingList,
     }, nil
 }
-
-// 🌟 แก้ Repo: อัปเกรดเรื่องเวลา, รูปภาพ และตรรกะลาย้อนหลัง (Retroactive)
+// 🌟 แก้ Repo: เพิ่ม user-detail ตามที่ Flutter ต้องการ
 func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseURL string) (map[string]interface{}, error) {
     var req struct {
         UserID           string    `gorm:"column:user_id"`
@@ -267,10 +266,10 @@ func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseUR
         Remark           string    `gorm:"column:remark"`
         CreatedAt        time.Time `gorm:"column:created_at"`
         Status           string    `gorm:"column:status"`
-        AllowRetroactive bool      `gorm:"column:allow_retroactive"` // 🌟 รับค่า Config มาเช็ค
+        AllowRetroactive bool      `gorm:"column:allow_retroactive"`
     }
 
-    // 🌟 ดึงข้อมูลใบลาพร้อมอ่านค่า allow-retroactive จาก JSON Config ใน SQL เดียว
+    // 1. ดึงข้อมูลใบลา
     err := r.db.Table("leave_requests lr").
         Select(`
             lr.*, 
@@ -288,6 +287,7 @@ func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseUR
         return nil, errors.New("unauthorized")
     }
 
+    // 2. ดึงไฟล์แนบ
     files := []map[string]interface{}{}
     r.db.Table("leave_attachments").Where("leave_request_id = ?", reqID).
         Select("original_name as \"file-name\", file_path as \"file-url\", file_type as \"file-type\", file_size as \"file-size\"").
@@ -303,6 +303,7 @@ func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseUR
         }
     }
 
+    // 3. ดึงข้อมูลผู้อนุมัติ
     var app struct {
         ApproverName string    `gorm:"column:approver_name"`
         ApproveRole  string    `gorm:"column:approve_role"`
@@ -319,7 +320,21 @@ func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseUR
             Limit(1).Scan(&app.ApproveRole)
     }
 
-    // 🌟 ตรรกะเช็คสถานะ Overdue ที่ถูกต้อง
+    // 🌟 4. [NEW] ดึงข้อมูลผู้ขอลา (User Detail)
+    var userInfo struct {
+        Name      string `gorm:"column:fullname_thai"`
+        AvatarURL string `gorm:"column:profile_picture"` // ⚠️ ถ้าใน DB ลูกพี่ใช้ชื่ออื่น (เช่น avatar_url) ให้แก้ตรงนี้นะครับ
+    }
+    r.db.Table("user_info").Select("fullname_thai, profile_picture").Where("user_id = ?", req.UserID).Scan(&userInfo)
+
+    var initRole string
+    r.db.Table("user_roles ur").
+        Select("r.role_name").
+        Joins("JOIN role r ON ur.role_id = r.role_id").
+        Where("ur.user_id = ? AND r.role_type = 'main'", req.UserID).
+        Limit(1).Scan(&initRole)
+
+    // 5. ตรรกะเช็คสถานะ Overdue
     finalStatus := req.Status
     if finalStatus == "pending" && req.DateFrom.Before(time.Now()) && !req.AllowRetroactive {
         finalStatus = "overdue"
@@ -330,7 +345,13 @@ func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseUR
         approveDateStr = app.CreatedAt.Format("2006-01-02T15:04:05")
     }
 
+    // 🌟 6. ประกอบร่าง JSON คืนให้ Frontend
     return map[string]interface{}{
+        "user-detail": map[string]interface{}{
+            "avatar-url": userInfo.AvatarURL,
+            "name":       userInfo.Name,
+            "init-role":  initRole,
+        },
         "request-detail": map[string]interface{}{
             "leave-type":        req.LeaveType,
             "date-from":         req.DateFrom.Format("2006-01-02T15:04:05"),
@@ -342,7 +363,7 @@ func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseUR
             "request-date":      req.CreatedAt.Format("2006-01-02T15:04:05"),
         },
         "approve-detail": map[string]interface{}{
-            "status":       finalStatus, // 🌟 ส่งสถานะที่คำนวณแล้ว
+            "status":       finalStatus,
             "approve-role": app.ApproveRole,
             "approver":     app.ApproverName,
             "reason":       app.Reason,
