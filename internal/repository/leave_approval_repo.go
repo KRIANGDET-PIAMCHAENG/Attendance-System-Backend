@@ -254,7 +254,7 @@ func (r *LeaveApprovalRepo) GetUserDetail(managerID, targetUserID string) (map[s
         "user-pending": pendingList,
     }, nil
 }
-// 🌟 แก้ Repo: เพิ่ม user-detail ตามที่ Flutter ต้องการ
+
 func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseURL string) (map[string]interface{}, error) {
     var req struct {
         UserID           string    `gorm:"column:user_id"`
@@ -320,19 +320,18 @@ func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseUR
             Limit(1).Scan(&app.ApproveRole)
     }
 
-    // 🌟 4. [NEW] ดึงข้อมูลผู้ขอลา (User Detail)
+    // 🌟 4. [NEW] ดึงข้อมูลผู้ขอลา (User Detail) แบบรอบเดียวจบ!
     var userInfo struct {
         Name      string `gorm:"column:fullname_thai"`
-        AvatarURL string `gorm:"column:profile_picture"` // ⚠️ ถ้าใน DB ลูกพี่ใช้ชื่ออื่น (เช่น avatar_url) ให้แก้ตรงนี้นะครับ
+        AvatarURL string `gorm:"column:picture"`   // ✅ แก้เป็น picture แล้ว
+        InitRole  string `gorm:"column:role_init"` // ✅ ดึง role_init มาใช้ได้เลย
     }
-    r.db.Table("user_info").Select("fullname_thai, profile_picture").Where("user_id = ?", req.UserID).Scan(&userInfo)
-
-    var initRole string
-    r.db.Table("user_roles ur").
-        Select("r.role_name").
-        Joins("JOIN role r ON ur.role_id = r.role_id").
-        Where("ur.user_id = ? AND r.role_type = 'main'", req.UserID).
-        Limit(1).Scan(&initRole)
+    
+    // Query รอบเดียวดึงมาครบ 3 อย่าง
+    r.db.Table("user_info").
+        Select("fullname_thai, picture, role_init").
+        Where("user_id = ?", req.UserID).
+        Scan(&userInfo)
 
     // 5. ตรรกะเช็คสถานะ Overdue
     finalStatus := req.Status
@@ -350,7 +349,7 @@ func (r *LeaveApprovalRepo) GetRequestDetail(managerID string, reqID int, baseUR
         "user-detail": map[string]interface{}{
             "avatar-url": userInfo.AvatarURL,
             "name":       userInfo.Name,
-            "init-role":  initRole,
+            "init-role":  userInfo.InitRole, // ✅ ใช้ InitRole จาก user_info เลย
         },
         "request-detail": map[string]interface{}{
             "leave-type":        req.LeaveType,
