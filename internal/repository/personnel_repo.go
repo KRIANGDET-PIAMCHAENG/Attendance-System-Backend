@@ -27,23 +27,26 @@ func NewPersonnelRepo(db *gorm.DB) *PersonnelRepo {
 
 func (r *PersonnelRepo) checkPermission(managerID, targetUserID string) bool {
 
-	if managerID == targetUserID {
+    // 1. ดูข้อมูลตัวเอง (ผ่าน!)
+    if managerID == targetUserID {
         return true
     }
-	
-	var adminCount int64
-	r.db.Table("user_roles ur").Joins("JOIN role r ON ur.role_id = r.role_id").
-		Where("ur.user_id = ? AND r.role_type = ?", managerID, "admin").Count(&adminCount)
-	if adminCount > 0 { return true }
+    
+    // 2. เช็คสิทธิ์ Admin (ผ่าน!)
+    var adminCount int64
+    r.db.Table("user_roles ur").Joins("JOIN role r ON ur.role_id = r.role_id").
+        Where("ur.user_id = ? AND r.role_type = ?", managerID, "admin").Count(&adminCount)
+    if adminCount > 0 { return true }
 
-	var subCount int64
-	r.db.Table("subordinate_manager_roles smr").
-		Joins("JOIN user_roles mr ON smr.manager_role_id = mr.role_id").
-		Joins("JOIN role r_manager ON mr.role_id = r_manager.role_id").
-		// 🌟 ใช้ smr.subordinate_id ให้ตรงกับ Database จริง
-		Where("mr.user_id = ? AND smr.subordinate_id = ? AND r_manager.role_type = ?", managerID, targetUserID, "main").
-		Count(&subCount)
-	return subCount > 0
+    // 🌟 3. เช็คสิทธิ์หัวหน้า (แก้ใหม่: ไม่สน role_type แล้ว!)
+    var subCount int64
+    r.db.Table("subordinate_manager_roles smr").
+        Joins("JOIN user_roles mr ON smr.manager_role_id = mr.role_id").
+        // ✂️ หั่น JOIN role r_manager และเงื่อนไข "main" ทิ้งไปเลย!
+        Where("mr.user_id = ? AND smr.subordinate_id = ?", managerID, targetUserID).
+        Count(&subCount)
+        
+    return subCount > 0
 }
 // 1. Get Pending (ใบลาที่รออนุมัติ และ "ยังไม่เลยกำหนดเวลา")
 func (r *PersonnelRepo) GetPending(managerID, personnelID string) ([]map[string]interface{}, error) {
