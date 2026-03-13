@@ -7,6 +7,7 @@ import (
 	//"time"
 	"github.com/gin-gonic/gin"
 	"my-app/internal/repository" // ⚠️ อย่าลืมแก้ Path
+	"fmt"
 )
 
 type PersonnelHandler struct {
@@ -65,24 +66,33 @@ func (h *PersonnelHandler) GetFilterRange(c *gin.Context) {
 }
 
 func (h *PersonnelHandler) GetDetail(c *gin.Context) {
-	managerID := getManagerID(c)
-	reqIDStr := c.Query("request-id")
-	
-	// ✂️ หั่นคำว่า LEV ทิ้ง เพื่อให้เหลือแต่เลขไปค้นใน Database
-	idStr := strings.TrimPrefix(reqIDStr, "LEV")
-	reqID, err := strconv.Atoi(idStr)
-	
-	if err != nil || reqID == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID คำขอไม่ถูกต้อง (ต้องเป็น LEV...)"})
-		return
-	}
+    managerID := getManagerID(c)
+    reqIDStr := c.Query("request-id")
+    
+    idStr := strings.TrimPrefix(reqIDStr, "LEV")
+    reqID, err := strconv.Atoi(idStr)
+    
+    if err != nil || reqID == 0 {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID คำขอไม่ถูกต้อง (ต้องเป็น LEV...)"})
+        return
+    }
 
-	res, err := h.repo.GetDetail(managerID, reqID)
-	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, res)
+    // 🌟 สร้าง Base URL จาก Request ปัจจุบัน
+    scheme := "http"
+    if c.Request.TLS != nil || c.Request.Header.Get("X-Forwarded-Proto") == "https" {
+        scheme = "https"
+    }
+    // จะได้ออกมาเป็นเช่น http://192.168.1.5:8080 หรือ https://api.myweb.com
+    baseURL := fmt.Sprintf("%s://%s", scheme, c.Request.Host)
+
+    // 🌟 ส่ง baseURL เข้าไปในฟังก์ชัน GetDetail
+    res, err := h.repo.GetDetail(managerID, reqID, baseURL)
+    
+    if err != nil {
+        c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+        return
+    }
+    c.JSON(http.StatusOK, res)
 }
 
 func (h *PersonnelHandler) GetUsers(c *gin.Context) {
@@ -208,15 +218,29 @@ func (h *PersonnelHandler) GetAttReqFilterRange(c *gin.Context) {
 
 // 🌟 Attendance Requests (Detail)
 func (h *PersonnelHandler) GetAttReqDetail(c *gin.Context) {
-	managerID := getManagerID(c)
-	reqIDStr := c.Query("request-id")
-	idStr := strings.TrimPrefix(reqIDStr, "REQ") // หั่นคำว่า REQ ทิ้ง
-	reqID, err := strconv.Atoi(idStr)
-	if err != nil || reqID == 0 { c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID คำขอไม่ถูกต้อง"}); return }
+    managerID := getManagerID(c)
+    reqIDStr := c.Query("request-id")
+    idStr := strings.TrimPrefix(reqIDStr, "REQ") // หั่นคำว่า REQ ทิ้ง
+    reqID, err := strconv.Atoi(idStr)
+    if err != nil || reqID == 0 { 
+        c.JSON(http.StatusBadRequest, gin.H{"error": "รูปแบบ ID คำขอไม่ถูกต้อง"}) 
+        return 
+    }
 
-	res, err := h.repo.GetAttReqDetail(managerID, reqID)
-	if err != nil { c.JSON(http.StatusForbidden, gin.H{"error": err.Error()}); return }
-	c.JSON(http.StatusOK, res)
+    // 🌟 ดึง Base URL จาก Request ปัจจุบัน
+    scheme := "http"
+    if c.Request.TLS != nil || c.Request.Header.Get("X-Forwarded-Proto") == "https" {
+        scheme = "https"
+    }
+    baseURL := fmt.Sprintf("%s://%s", scheme, c.Request.Host)
+
+    // 🌟 ส่ง baseURL เข้าไปใน Repo
+    res, err := h.repo.GetAttReqDetail(managerID, reqID, baseURL)
+    if err != nil { 
+        c.JSON(http.StatusForbidden, gin.H{"error": err.Error()}) 
+        return 
+    }
+    c.JSON(http.StatusOK, res)
 }
 
 // 🌟 Attendance History
