@@ -102,36 +102,34 @@ func (r *UserRepo) AllRole(id string) ([]string, error) {
 }
 
 func (r *UserRepo) GetUserInfoByEmail(email string) (*UserInfoLogin, error) {
-	var info UserInfoLogin
+    var info UserInfoLogin
 
-	// 🚩 ต้องใช้ fullname_eng AS name (หรือ fullname_thai แล้วแต่จะเลือก)
-	// เพื่อให้ GORM Scan เข้าฟิลด์ Name ใน Struct ได้
-	query := `
-        SELECT ui.user_id, ui.fullname_eng AS name, ui.email , r.role_type AS role_gen, picture
-        FROM user_info ui
-        JOIN user_roles ur ON ui.user_id = ur.user_id
-        JOIN role r ON ur.role_id = r.role_id
-        WHERE LOWER(ui.email) = LOWER(?)
+    // 🚩 แก้ตรงนี้: เอา JOIN ออก ดึงแค่ข้อมูลจากตาราง user_info ก็พอ
+    query := `
+        SELECT user_id, fullname_eng AS name, email, picture
+        FROM user_info
+        WHERE LOWER(email) = LOWER(?)
         LIMIT 1
     `
 
-	result := r.db.Raw(query, email).Scan(&info)
+    result := r.db.Raw(query, email).Scan(&info)
 
-	if result.Error != nil {
-		return nil, result.Error
-	}
+    if result.Error != nil {
+        return nil, result.Error
+    }
 
-	if result.RowsAffected == 0 {
-		return nil, fmt.Errorf("user not found with email: %s", email)
-	}
+    if result.RowsAffected == 0 {
+        return nil, fmt.Errorf("user not found with email: %s", email)
+    }
 
-	role, err := r.AllRole(info.UserID)
-	if err != nil {
-		return nil, err
-	}
+    // 🚩 ไปดึง Role แยกตรงนี้แทน (ถ้า User ไม่มี Role ฟังก์ชันนี้ควรคืนค่าเป็น Slice เปล่า ๆ และไม่ Error)
+    role, err := r.AllRole(info.UserID)
+    if err != nil {
+        return nil, err
+    }
 
-	info.Role = role
-	return &info, nil
+    info.Role = role
+    return &info, nil
 }
 
 // UpdatePicture ใช้สำหรับอัปเดต URL รูปภาพของ User โดยอิงจาก Email
