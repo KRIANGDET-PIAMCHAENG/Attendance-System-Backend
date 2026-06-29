@@ -1,6 +1,3 @@
-# Database backups
-*.sql
-
 # Go distribution files
 *.tar.gz
 

@@ -8,18 +8,25 @@ services:
     env_file:
       - .env
     ports:
-      - "5430:5430"
+      - "5430:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./inital_db.sql:/docker-entrypoint-initdb.d/inital_db.sql
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d attendance" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   api:
-    build: .
+    image: downnfalls/attendance_api
     container_name: attendance_api
     restart: always
     ports:
       - "3000:3000"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     env_file:
       - .env
 
