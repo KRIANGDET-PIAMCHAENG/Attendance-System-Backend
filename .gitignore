@@ -9,3 +9,6 @@ preview.json
 
 uploads/
 *.tar.gz
+
+Dockerfile
+docker-compose.yml
