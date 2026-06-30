@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   db:
-    image: postgres:15-alpine
+    image: postgres:alpine
     container_name: attendance_db
     restart: always
     env_file:
@@ -10,8 +10,8 @@ services:
     ports:
       - "5430:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./inital_db.sql:/docker-entrypoint-initdb.d/inital_db.sql
+      - pgdata:/var/lib/postgresql
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres -d attendance" ]
       interval: 5s
